@@ -5,7 +5,10 @@ title: ""
 labels: ""
 ---
 
-<!-- On a board other than the PT516-52s, a GPU that does not initialise with a mode set is the image check working; use the board-report template instead. -->
+<!-- Other boards are unsupported; use the board-report template. For initialization failures, include the kernel error rather than assuming its cause. -->
+
+<!-- Before posting logs or paths, remove hostnames, usernames, serial numbers
+     and GPU/boot UUIDs. Keep driver versions, limits and error messages. -->
 
 **Commit** (`git rev-parse HEAD`):
 

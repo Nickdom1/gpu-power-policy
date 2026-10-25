@@ -8,8 +8,8 @@ fi
 [[ $(cat /sys/bus/pci/devices/0000:01:00.0/vendor) == 0x10de && $(cat /sys/bus/pci/devices/0000:01:00.0/device) == 0x2460 ]] || { echo 'STOP: PCI identity differs'; exit 1; }
 policy_mode=$(cat /sys/module/nvidia/parameters/NVreg_Pt516BootPolicy)
 module_srcversion=$(cat /sys/module/nvidia/srcversion)
-# Mode 3: the reviewed default generation. Mode 4: the one-shot gpu-envelope
-# specialisation (policy 2 max 140 W, policy 13 max 120 A, rated unchanged).
+# Mode 3: policy 2 max 125 W. Mode 4: policy 2 max 140 W, policy 13 max 120 A.
+# Both modes preserve the rated values; either can be the normal boot entry.
 # Each mode is bound to its own module; PT516_ALLOW_MODE4=1 opts a caller in.
 case $policy_mode in
   3) [[ $module_srcversion == FE193E9810BEB3EED2D3CE9 ]] || { echo 'STOP: experimental module differs'; exit 1; }

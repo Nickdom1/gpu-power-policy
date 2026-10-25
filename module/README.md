@@ -1,23 +1,58 @@
-# module
+# Boot policy and launcher
 
-The boot-time policy image and the `nvidia-powerd` launcher. Install guides: [docs/install-nixos.md](../docs/install-nixos.md), [docs/install-other-distros.md](../docs/install-other-distros.md).
+The module changes the board-power policy at boot and starts `nvidia-powerd`
+with a 125 W target filter. Installation is covered by the
+[NixOS guide](../docs/install-nixos.md) and
+[untested porting notes](../docs/install-other-distros.md).
+
+## Boot image
+
+The patch uses the NVIDIA driver's existing VBIOS extraction, makes a compact
+copy in RAM, edits the selected policy maximum and fixes the checksum. It
+verifies the image hashes and subimage sums before registering the copy through
+the driver's `vbios` registry key. It also enlarges the GSP bootstrap command
+queue so the image can be handed to firmware. Nothing is flashed.
+
+Mode 3 raises policy 2's board-power maximum to 125 W. Mode 4 raises that
+maximum to 140 W and policy 13's current maximum to 120 A. Both retain the
+rated values and start current at 99 A; the launcher requests a 125 W target
+in either mode. A configured maximum is not measured power consumption.
+
+A mismatched image, PCI identity or checksum prevents GPU initialization for
+that boot. `nvidia.NVreg_Pt516BootPolicy=0` disables the edit while retaining the
+patched driver. See [recovery](../SAFETY.md#levels-of-undo) for stock-driver undo.
+The known [reinitialization issue](../CHANGELOG.md#known-issues) remains.
+
+## Launcher
+
+`launch.py` replaces the power daemon's `ExecStart`. It checks the kernel,
+driver, module `srcversion`, NVML library hash and PCI identity, then queries
+power constraints and checks the boot log. It makes one guarded role-8 power
+request before starting powerd with the target filter. Failed checks stop the
+service before the filter starts.
+
+If the booted policy mode differs from the configured mode, the launcher runs
+stock powerd until reboot. Other identity mismatches are refused. The filter
+rewrites nonzero Dynamic Boost targets without checking AC state, so the
+installed configuration is for AC use only.
+
+## Parameters and source files
+
+`NVreg_Pt516BootPolicy` selects 0 (edit disabled), 1 (compact image without an
+edit), 2 (120 W), 3 (125 W) or 4 (envelope). The NixOS module exposes modes 3
+and 4. `NVreg_CaptureBootVbios=1` additionally retains the original image at
+`/proc/driver/nvidia/gpus/<pci>/boot_vbios`, readable only by root. Capture is
+off by default; use the local [inspection tools](../tools/boot-vbios/README.md)
+when investigating it.
 
 | File | Role |
 |---|---|
-| `policy-shim.patch` | NVIDIA open kernel module (595.99.02, base `e394a404`): retains the driver's boot-time VBIOS extraction, derives a compact in-RAM copy, applies the mode's edit (mode 3: policy 2 maximum 125 000 mW), fixes the checksum, verifies hashes and subimage sums, registers the copy through the registry `vbios` key, and enlarges the GSP bootstrap command queue. With `NVreg_CaptureBootVbios=1` it also exposes the retained raw image read-only at `/proc/driver/nvidia/gpus/<pci>/boot_vbios` |
-| `envelope-mode4.patch` | Adds mode 4: policy 2 maximum 140 000 mW and policy 13 maximum 120 000 mA, rated values untouched |
-| `launch.py` | Replaces powerd's `ExecStart`: identity checks (kernel, driver, module `srcversion`, NVML hash, PCI), a read-only constraints query, a kernel-log check, one role-8 request, then `exec` of powerd with the filter. A failed identity check stops the service. A boot-policy mode different from the configured mode runs stock powerd until reboot |
-| `check-maximum.py`, `inspect-boot-log.py`, `nvml-limit.py` | The launcher's helpers |
-| `request/` | The guarded role-8 request: a GDB script that changes one public NVML power-limit call's role byte in the pinned library, and its driver |
-| `nvpcf/` | `LD_PRELOAD` filter for powerd that rewrites the Dynamic Boost target it sends (MIT), with its C tests |
-| `provenance.json` | The pinned identities the launcher checks |
-| `tests/` | CPU-only tests: launcher startup paths, the request hook against a synthetic NVML-shaped library, the image-edit checksum invariant |
+| `policy-shim.patch` | Boot image preparation, validation and optional capture |
+| `envelope-mode4.patch` | Mode-4 board-power and current maxima |
+| `launch.py` | Compatibility checks, request and daemon launch |
+| `check-maximum.py`, `inspect-boot-log.py`, `nvml-limit.py` | Launcher helpers |
+| `request/` | Pinned role-8 NVML request hook and driver |
+| `nvpcf/` | Dynamic Boost target filter and C tests |
+| `provenance.json` | Pinned identities |
+| `tests/` | CPU fixtures for startup, request transport and image edits |
 | `default.nix`, `package.nix`, `nvpcf/default.nix` | NixOS packaging |
-
-Module parameters: `NVreg_Pt516BootPolicy` (0 off, 1 compact image without an edit, 2 120 W, 3 125 W, 4 envelope) and `NVreg_CaptureBootVbios`.
-
-The boot patch refuses a mismatched image, PCI identity or checksum; the GPU then
-fails to initialize for that boot. Disable the edit with
-`nvidia.NVreg_Pt516BootPolicy=0`. The launcher separately verifies the running
-kernel, driver, module and NVML identities before the role-8 request; it does not
-silently skip a failed check. See [SAFETY.md](../SAFETY.md) for recovery.

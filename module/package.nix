@@ -49,7 +49,7 @@ stdenvNoCC.mkDerivation {
     runHook postInstall
   '';
   meta = {
-    description = "Predator PT516 125 W policy initialization (and one-shot envelope checks) for the pinned NVIDIA driver";
+    description = "PT516 GPU power-policy initialization for the pinned NVIDIA driver";
     platforms = [ "x86_64-linux" ];
     license = lib.licenses.mit;
   };

@@ -1,38 +1,90 @@
 # Safety
 
-This software changes firmware-enforced power and current limits. Readback checks and recovery paths do not establish safe electrical or thermal limits.
+Use this configuration on AC, under supervision, with the laptop on a cooler.
+It changes firmware-enforced power and current limits. The installed powerd
+filter rewrites nonzero targets without checking AC state; the experiment
+runner's AC guard does not disable that persistent filter.
 
-## What protects you
+Readback checks and recovery paths do not establish safe electrical or thermal
+limits. Keep the GPU otherwise idle before starting an experiment, and stop on
+visual artifacts.
 
-- **Nothing is flashed.** The edited power table exists only in RAM for one boot. The original image is verified by SHA-256 first. Booting without the module parameter disables the policy edit.
-- **Fail-closed boot.** If the image, PCI identity or checksum does not match, the driver refuses to prepare the policy image and the GPU does not initialise for that boot. Recovery: boot with `nvidia.NVreg_Pt516BootPolicy=0` on the kernel command line, or an earlier generation.
-- **The launcher checks before it acts:** driver and kernel version, module `srcversion`, NVML hash, PCI identity, the read-only power constraints, and the kernel log of the boot. A module left over from a previous boot leaves stock `nvidia-powerd` running; any other mismatch fails the service before the target filter starts.
-- **Enter the envelope only with `bootctl set-oneshot`.** Entered that way, any reboot returns to the default entry. Nothing enforces this: the `gpu-envelope` specialisation stays in the boot menu and can be selected by hand.
-- **Runtime current changes are bounded twice.** The P13 client accepts only 94 000 to the sitting cap (at most the image maximum) in Python, and again inside the GDB hook that performs the write. The write must address policy 13 alone and is built from a fresh read of the control block. The NVML library hash is pinned. Above-maximum board-power requests were refused on this board; above-maximum P13 writes were tested only against a CPU fixture.
-- **Each change is read back, and restore is attempted on exit.** After a write the tool reads the control block and the status export and compares them with the request. On exit, including Ctrl-C, errors and workload failure, it attempts to write 99 A back and reads it back the same way. If that guarded write is refused because the control block changed elsewhere, it writes the block read at start as a last resort. That last-resort path checks A61A readback only, not A619 status. The summary distinguishes the checks; if restore failed, P13 may still be raised until reboot, which re-seeds 99 A from the VBIOS.
-- **Guards stop the experiment and attempt restoration on:** GPU ≥ 85 °C; any hardware slowdown, thermal or power-brake flag; an Xid in the journal; loss of AC; loss of sustained load; the enforced or maximum power limit differing from what the booted image should give.
+## Boot and runtime checks
 
-## What is not protected
+The power table is edited only in RAM for one boot. The driver verifies the
+original image by SHA-256 and refuses a mismatched image, PCI identity or
+checksum. That refusal prevents GPU initialization for the boot. Disable the
+edit with `nvidia.NVreg_Pt516BootPolicy=0`, or boot a known stock generation.
+Mode 0 still uses a patched driver.
 
-- **VRM temperature.** The regulator's telemetry is not read; GPU temperature does not measure regulator temperature. Sustained operation above stock current was tested only in runs of 2 minutes or less.
-- **Faults faster than sampling.** No regulator over-current trip was observed; a fault may remove the GPU from the bus and require a reboot.
-- **The estimated current.** P13's "99 A" is the GPU's own estimate, not a measured current.
-- **The power input.** A larger adapter does not establish headroom in the laptop's input path.
+The launcher checks the driver, kernel, module `srcversion`, NVML hash, PCI
+identity, read-only power constraints and boot log before requesting the target.
+A different booted policy mode runs stock powerd until reboot; other identity
+mismatches stop the service before the filter starts.
+
+Runtime writes are bounded in both Python and the GDB hook: 94 000 mA through
+the configured run cap, no higher than the image maximum. Each write addresses
+policy 13 alone and starts from a fresh control-block read. The NVML hash is
+pinned. Above-maximum board-power requests were refused on this board;
+above-maximum current writes were tested only against a CPU fixture.
+
+During loaded experiments, guards stop the run and attempt restoration for GPU
+temperature at or above 85 °C, hardware slowdown, thermal or power-brake flags,
+an Xid driver error, loss of AC or sustained load, and unexpected enforced or
+maximum power limits.
+
+## Runtime restoration
+
+After each write, the tool compares the control readback (A61A) and firmware
+status (A619) with the requested value. Normal restoration writes 99 A and
+performs both checks. Errors, workload failure and `Ctrl-C` also trigger a
+restoration attempt when the runner may have changed the limit.
+
+If normal restoration throws an exception, the fallback attempts to write the
+block saved at setup. It checks **A61A control readback only**, not A619 firmware
+status. This fallback can follow any normal-restore exception, including a
+status-check failure; it is not full restoration verification.
+
+The saved `result.json` distinguishes `a61a+a619`, `a61a-only` and `failed`.
+Read its `errors` as well as `restore_check`. If restoration fails or remains
+uncertain, stop and reboot before further experiments; the boot image seeds
+99 A again.
+
+## Limits of the checks
+
+- **Regulator temperature is not read.** GPU temperature does not measure it.
+  Sustained operation above stock current was tested only in runs of 2 minutes
+  or less.
+- **Sampling can miss fast faults.** No regulator over-current trip was observed;
+  a fault may remove the GPU from the bus and require a reboot.
+- **Firmware current is an estimate.** P13's reported amperes are not calibrated
+  physical-current measurements.
+- **The input path is not validated by adapter size.** A larger adapter does not
+  establish headroom in the laptop's power input.
 
 ## Levels of undo
 
-| To undo | Do |
+| To undo | Action and consequence |
 |---|---|
-| A running experiment | `Ctrl-C`; the tool attempts the P13 restore and stops the workload |
-| A raised P13 after a crash or failed restore | Reboot; the boot image seeds 99 A. Nothing persists |
-| The 125 W target (powerd filter and request) | Set `hardware.pt516GpuPower.enable = false`, rebuild, switch and restart `nvidia-powerd` for stock powerd; the boot image stays until reboot |
-| The policy image itself | Boot with `nvidia.NVreg_Pt516BootPolicy=0` on the kernel command line, or an earlier generation |
+| A running experiment | Press `Ctrl-C`; the tool stops the workload and attempts the current restore |
+| Raised current after a crash or uncertain restore | Reboot to seed 99 A; the configured boot mode and powerd filter remain |
+| The persistent 125 W target filter | Set `hardware.pt516GpuPower.enable = false`, rebuild, switch and restart `nvidia-powerd` for stock powerd; the boot image stays until reboot |
+| The boot policy edit for one boot | Add `nvidia.NVreg_Pt516BootPolicy=0` at the boot menu; this retains the patched driver |
+| The patched driver and configuration | Disable the module, rebuild and reboot, or boot a generation known to predate this configuration |
 
-## Tested envelope
+Setting `mode = 4` uses it on every boot. The optional `gpu-envelope`
+specialization can instead be selected once with `bootctl set-oneshot`; the
+next boot uses the default entry. Rebooting resets runtime current, not the
+configured mode or installed filter. See the
+[NixOS recovery guide](docs/install-nixos.md#recovery) or
+[porting undo steps](docs/install-other-distros.md#revert).
+
+## Historical test conditions
 
 | Limit | Tested | Not tested |
 |---|---|---|
-| P13 (current) | 95–114 A at runtime, as 20–60 s holds inside a 600 s run; 107 A in two 120 s runs (with two 99 A reference runs) | anything longer; anything above 114 A |
-| P2 (board power) | 125 W target, in runs up to 10 min | the 140 W image maximum was never used as a target |
+| P13 (current) | 95–114 A as 20–60 second holds inside a 600 second run; 107 A in two 120 second runs with two 99 A references | Longer holds or settings above 114 A |
+| P2 (board power) | 125 W target in runs up to 10 minutes | The 140 W image maximum as a target |
 
-Run the tools on AC, with the laptop on a cooler and the GPU otherwise idle. Stop on visual artifacts.
+See [results](docs/results.md) for measurements and
+[validation](PROVENANCE.md#validation) for hardware and automated checks.

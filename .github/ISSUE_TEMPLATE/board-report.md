@@ -6,11 +6,12 @@ labels: board-report
 ---
 
 <!-- Use your existing driver. Do not install the experimental patch to file this report.
-     Do not attach firmware, VBIOS images or raw captures. -->
+     Do not attach firmware, VBIOS images or raw captures.
+     Remove hostnames, usernames, serial numbers and GPU/boot UUIDs from any output. -->
 
 **Laptop model and GPU:**
 
-**VBIOS version and stock power limits** (`nvidia-smi -q`):
+**VBIOS version and stock power limits** (copy only the VBIOS Version and Power Limits fields from `nvidia-smi -q`, not the full report):
 
 **Driver, kernel and distribution:**
 

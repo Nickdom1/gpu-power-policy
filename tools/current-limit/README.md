@@ -1,27 +1,51 @@
-# Current-limit experiments
+# Current-limit implementation
 
-The P13 client performs bounded writes with A61A control readback and A619 status
-checks. Cleanup attempts to restore 99 A; its summary distinguishes both checks
-from A61A-only last-resort readback. See [SAFETY.md](../../SAFETY.md).
+The client runs bounded experiments on firmware policy 13 (the core-current
+policy, or P13). Follow the [tool guide](../README.md) for preparation, idle
+inspection, the identity-write smoke test and experiment commands.
+
+## Control and verification
+
+The control block is 6356 bytes: policy mask at `+0x10`, class at `+0x96c` and
+current limit at `+0x970`. Only policy 13 may be written. Python and the GDB hook
+both enforce a 94 000 mA floor and the run cap, which cannot exceed the booted
+image's maximum. Mode 3 permits at most 99 000 mA; mode 4 permits 120 000 mA.
+These bounds do not establish a safe sustained current.
+
+Each write starts with a fresh control-block read (A61A), refuses unrelated
+changes, sets the limit (E61B), compares control readback and checks firmware
+status (A619). The runner holds a single-writer lock. On exit it attempts to
+restore 99 A. After a normal-restore exception, the fallback writes the
+setup-time block and checks A61A only; it does not check A619.
+See [restoration and recovery](../../SAFETY.md#runtime-restoration).
+
+A completed loaded run requires the RTX 3080 Ti renderer. Scored holds also
+require positive integer score/duration fields, a duration expressed in `ms`,
+and a duration within 1 second of the request. Startup may precede renderer
+output; completion may not.
+
+## Source files
 
 | File | Role |
 |---|---|
-| `p13.py` | 6356-byte control codec: mask `+0x10`, class `+0x96c`, limit `+0x970`; bounds, status checks and schedules |
-| `client.py`, `client.gdb` | Pinned NVML transport; refuses unsupported controls, other policies and out-of-window values |
-| `ladder.py`, `run.sh` | Preflight, smoke/hold/ladder, telemetry guards, placement, restore attempts and analysis |
-| `tests/` | CPU tests against a synthetic NVML-shaped library |
+| `p13.py` | Control codec, bounds, status checks and schedules |
+| `client.py`, `client.gdb` | Pinned NVML transport and write guards |
+| `ladder.py`, `run.sh` | Preflight, smoke/hold/ladder, telemetry guards, placement, restoration and analysis |
+| `tests/` | CPU fixtures for transport, control, restoration and benchmark validation |
 
-```sh
-sudo bash run.sh --smoke
-sudo bash run.sh --hold 107000 --seconds 120     # mode 4; one ABBA arm
-sudo bash run.sh --cap-ma 114000                 # mode 4; pulses, null, upward rungs
-python3 ladder.py --plan --cap-ma 99000          # inspect mode-3 downward/null schedule
-```
+The runner imports the inventory/status decoder and display helpers from
+[policy-status/](../policy-status/README.md). Telemetry and workload launch use
+`tools/collect.sh`, `tools/bench.sh` and `tools/lib/`.
 
-See the [tool guide](../README.md) for prerequisites and ABBA order. Mode 3 defaults to a
-99 000 mA cap (downward/null only); larger explicit caps are refused. Holds require at least
-120 s so both placement checks can complete.
+## Saved artifacts
 
-Artifacts: `summary.txt`, `result.json`, `identity.json`, `analysis.json` for loaded
-runs, `snapshots/`, `rm-ops/` and `MANIFEST.sha256`. Per-window clocks and policy
-readings describe the ladder; the whole-run FurMark score is the ABBA outcome.
+`summary.txt` and `result.json` record completion, errors and restoration checks.
+`identity.json` records the boot, library identity and schedule. Loaded runs add
+`analysis.json`; `snapshots/` and `rm-ops/` retain policy reads and control
+operations, and `p13-ladder/` holds workload telemetry.
+`tool-hashes.json` identifies the source files; `MANIFEST.sha256` hashes outputs.
+
+Per-window clocks and policy readings describe the ladder. The whole-run
+FurMark score is the outcome for each ABBA hold; it is not a score for an
+individual ladder window. Historical outputs in `docs/results/` retain their
+original format and reporting limitations.

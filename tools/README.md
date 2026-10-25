@@ -1,36 +1,115 @@
-# Experiment tools
+# Checks and experiments
 
-Run from your desktop terminal with `sudo bash …`; artifacts go under `/var/tmp/`.
-The root runner reconstructs the invoking user's desktop environment from the
-sudo process and user manager, launches FurMark and display queries as that user,
-and returns artifact ownership to them. Runtime tools attempt restoration and
-report the readback performed; they cannot guarantee recovery.
+Use these tools from a desktop terminal on AC, with the GPU otherwise idle.
+The patched driver and `nvidia-powerd` must already be active; follow the
+[installation guide](../docs/install-nixos.md) first. If `turbo-broker` is
+installed, enable Turbo. Use a single-user machine, under supervision, with the
+laptop on a cooler. Read the [operating limits](../SAFETY.md) before any write.
 
-| Path | Role |
-|---|---|
-| [current-limit/](current-limit/) | Bounded P13 client, smoke, causal ladder and ABBA hold |
-| [policy-status/](policy-status/) | Idle policy/seed check, decoder and display witness |
-| [boot-vbios/](boot-vbios/) | Optional boot-image capture and offline decoder |
-| `policy-125/guard-boot.sh` | Kernel, driver, PCI, mode and module identity checks |
-| `collect.sh`, `bench.sh`, `lib/` | GPU/AC/Turbo telemetry, kernel journal and FurMark launch |
+All commands below run from the repository root.
 
-## Requirements and order
+## Prepare
 
-The patched module and `nvidia-powerd` must already be active. Install Python 3,
-GDB, `nvidia-smi`, `journalctl` and `sudo`. The loaded runs additionally need KDE
-Plasma/Xwayland, `kscreen-doctor`, `xwininfo`, `xprop`, `libXRes` and FurMark 2.10.2.
-`./prepare-tools.sh` fetches **unfree FurMark** via the pinned nixpkgs revision in
-[shell.nix](../shell.nix); prepare it before running experiments. Idle and smoke
-checks do not need FurMark. Run on AC; if `turbo-broker` is installed, enable Turbo.
+Install Python 3, GDB, `nvidia-smi`, `journalctl` and `sudo`. Loaded experiments
+also require KDE Plasma/Xwayland, `kscreen-doctor`, `xwininfo`, `xprop` and
+`libXRes`. They check fullscreen placement on the laptop panel.
 
-From `tools/`:
+Before a loaded experiment, prepare **unfree FurMark 2.10.2** through the pinned
+nixpkgs revision used by [shell.nix](../shell.nix):
 
-1. `sudo bash policy-status/run.sh --idle-only`: read inventory/status and verify the boot seed; no write.
-2. `sudo bash current-limit/run.sh --smoke`: one identity write (99 000 → 99 000), exercising the transport.
-3. `sudo bash current-limit/run.sh --hold 99000 --seconds 120` and the same at `107000`, in A B B A order, with at least 90 s cooldown: score comparison on mode 4.
-4. `sudo bash current-limit/run.sh --cap-ma 114000`: causal ladder on mode 4. Mode 3 defaults to 99 000 (downward/null only); larger explicit caps are refused.
+```sh
+./tools/prepare-tools.sh
+```
 
-`--plan` prints the schedule without GPU access. The witness checks fullscreen
-placement on the laptop panel and the NVIDIA renderer. On an unsupported desktop
-it refuses: the ladder stops before its first write; a hold has already written
-at +5 s and attempts restoration. `Ctrl-C` also attempts restoration and stops.
+Preparation succeeds when `tools/.tools/furmark/bin/furmark` is available.
+Idle and smoke checks do not need FurMark. The root runner reconstructs the
+invoking user's desktop environment and launches the workload and display queries
+as that user.
+
+## Read the idle state
+
+```sh
+sudo bash tools/policy-status/run.sh --idle-only
+```
+
+This reads inventory and status without a workload or a write. Inspect the
+printed `SEED CHECK` and saved `seed-check.json`: mode 4 must report `PASS`, and
+mode 3 must report `stock seeds confirmed`. A completed capture or exit status 0
+alone does not mean the seed verdict passed. On refusal or an unexpected state,
+stop before writing, retain the printed artifact directory and investigate the
+reason using the [diagnostic reference](policy-status/README.md).
+
+## Test one identity write
+
+After the idle verdict passes:
+
+```sh
+sudo bash tools/current-limit/run.sh --smoke
+```
+
+This writes 99 A back to 99 A to test the transport without changing the intended
+setting. Expect `P13 LADDER: COMPLETE` and `identity E61B SET rm_status=0x0`
+in the summary. In the saved `result.json`, require `"complete": true`, an empty
+`errors` list and `"restore_check": "a61a+a619"`. The smoke summary does not print
+a separate restore line. Any failure means stop before loaded experiments and
+inspect `summary.txt` and `result.json` in the printed directory.
+
+## Run optional experiments
+
+For the score comparison, boot **mode 4** before running the 107 A commands.
+Run four benchmarks at **99 A, 107 A, 107 A and 99 A**, in that order (ABBA).
+Wait **at least 90 seconds** between runs. Holds require at least 120 seconds
+so both placement checks can complete.
+
+```sh
+sudo bash tools/current-limit/run.sh --hold 99000 --seconds 120
+# Wait at least 90 seconds after each run.
+sudo bash tools/current-limit/run.sh --hold 107000 --seconds 120  # mode 4
+# Wait at least 90 seconds.
+sudo bash tools/current-limit/run.sh --hold 107000 --seconds 120  # mode 4
+# Wait at least 90 seconds.
+sudo bash tools/current-limit/run.sh --hold 99000 --seconds 120
+```
+
+Compare the four whole-run FurMark scores. A completed loaded run requires the
+RTX 3080 Ti renderer; a scored hold also requires a positive integer score and
+millisecond duration within 1 second of the requested run.
+
+The causal ladder tests downward pulses, a null write and upward steps. The
+following command also requires **mode 4** because it exceeds 99 A:
+
+```sh
+sudo bash tools/current-limit/run.sh --cap-ma 114000
+```
+
+Mode 3 defaults to a 99 000 mA cap and permits only downward changes and the
+99 A reference; larger explicit caps are refused. Preview a schedule without
+hardware access by adding `--plan`, for example:
+
+```sh
+bash tools/current-limit/run.sh --plan --cap-ma 99000
+```
+
+On unsupported desktop placement, the ladder stops before its first write.
+A hold writes at +5 seconds, before placement is checked, and attempts restoration
+if that check fails. Stop on visual artifacts. `Ctrl-C` stops the workload and
+attempts restoration.
+
+## Inspect outputs and recover
+
+Each runner prints `Saved: /var/tmp/...`. Start with `summary.txt` and
+`result.json`; loaded experiments also retain telemetry, raw policy snapshots
+and control operations. The artifact files are handed back to the invoking user.
+See the [current-limit reference](current-limit/README.md) for their layout.
+
+Normal restoration checks both the control block and firmware status
+(`a61a+a619`). If it throws an exception, the fallback attempts the setup-time
+block and checks only control readback (`a61a-only`). Inspect the errors as well
+as the restore field; fallback readback is not full restoration verification.
+If restoration fails or remains uncertain, reboot before further experiments.
+Rebooting resets runtime current, but leaves the configured boot mode and
+installed powerd filter in place. See [levels of undo](../SAFETY.md#levels-of-undo).
+
+For optional firmware investigation, the [boot-VBIOS tools](boot-vbios/README.md)
+copy and decode the driver's retained image. They are independent of these
+experiments and disabled by default at boot.

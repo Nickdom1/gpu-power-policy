@@ -1,79 +1,63 @@
-# gpu-power-policy
+# GPU Power Policy
 
-Experimental Linux tools for NVIDIA laptop GPU power and current limits, without
-flashing the VBIOS. The reference system is an Acer Predator Triton 500 SE
-(PT516-52s), RTX 3080 Ti Laptop GPU, NVIDIA 595.99.02 with GSP, and Linux 7.2.7.
-
-**Status:** unreleased proof of concept. Hardware results come from one laptop;
-the code has changed since and the current tree has CPU validation only.
-Use on AC under supervision: the installed powerd filter does not preserve
-battery behaviour. Read [SAFETY.md](SAFETY.md) and the
-[known issues](CHANGELOG.md#known-issues)
-before installation.
-
-## What changed
-
-Raising the board-power target from 120 to 125 W left FurMark at roughly 118 W.
-Firmware analysis suggested a separate current constraint. Controlled changes
-to that limit tested the explanation and measured its performance effect:
-
-| Experiment | Observation on the reference laptop |
-|---|---|
-| Boot policy edit and powerd target override | Board-power maximum raised from 115 to 125 W; runtime target set to 125 W |
-| Lower the firmware current limit from 99 to 95 A | SM clocks fell 7.4–8.9% in four pulses, then recovered after restoration |
-| Raise the current limit to 107 A, keeping the 125 W target | **+6.6% FurMark score** against 99 A: two runs per condition in ABBA order |
-
-The higher current limit shifted the observed constraint toward board power.
-These are FurMark results, not measured gaming gains or evidence of a safe
-sustained regulator limit. Conditions, individual runs and the decision rule are
-in [results](docs/results.md); the [research method and history](docs/history.md)
-include failed steps and the Claude-assisted investigation.
+Experimental Linux tools for power and current limits on the Acer Predator Triton
+500 SE (PT516-52s), RTX 3080 Ti Laptop GPU. Requires NVIDIA 595.99.02 with GSP
+and Linux 7.2.7. Other configurations are unsupported.
 
 ## How it works
 
-- **At boot:** a patch to NVIDIA's open kernel module edits an in-RAM copy of the
-  card's VBIOS power-policy table before handing it to GSP. A guarded launcher
-  requests the higher limit and starts `nvidia-powerd` with a Dynamic Boost
-  target filter.
-- **At runtime:** an envelope mode also widens policy 13's current maximum while
-  leaving its 99 A boot setting unchanged. The experiment client changes that
-  limit, verifies readback, and attempts restoration on exit, reporting failures.
+At boot, a patched NVIDIA open kernel module edits the VBIOS power-policy table
+in RAM; nothing is flashed. A launcher checks compatibility, requests the higher
+board-power limit and starts `nvidia-powerd` with a filter that sets its target
+to 125 W.
 
-Implementation: [module](module/README.md). Experiments and optional inspection: [tools](tools/README.md).
-Related projects previously published in-memory VBIOS overrides and powerd
-filters; [prior art](docs/prior-art.md) records credits and distinctions.
+At runtime, the experiment client changes the separate current limit, checks
+readback and attempts restoration on exit. Mode 4 permits settings above 99 A
+while still starting at 99 A. The client runs bounded experiments; it does not
+provide a persistent current-setting service.
 
-## Scope and recovery
+## Results on the reference laptop
 
-The image edit and runtime hooks are pinned to the reference board, VBIOS and
-library build; exact identities are in [PROVENANCE.md](PROVENANCE.md).
-The harness uses KDE Plasma with Xwayland to verify workload placement.
+Raising the board-power target from 120 to 125 W left FurMark near 118 W.
+Lowering and raising the current limit tested the separate constraint:
 
-A rejected boot image prevents GPU initialization for that boot. Boot with
-`nvidia.NVreg_Pt516BootPolicy=0` to disable the edit. Rebooting resets runtime
-current changes, but disabling the installed powerd filter is a separate step;
-see [levels of undo](SAFETY.md#levels-of-undo).
+| Change | Observation |
+|---|---|
+| Boot policy edit and powerd filter | Board-power maximum raised from 115 to 125 W; runtime target set to 125 W |
+| Current limit 99 → 95 A | SM clocks fell 7.4–8.9% in four pulses, then recovered after restoration |
+| Current limit 99 → 107 A, target held at 125 W | **+6.6% FurMark score**, two runs per condition at 99, 107, 107 and 99 A (ABBA) |
 
-Other boards are unsupported, and the shipped capture/decoder tools refuse other
-identities. To request investigation, open a board report with your laptop model,
-GPU, VBIOS, driver, kernel and stock power limits. No patched-driver installation
-or firmware upload is needed for that report.
+The configured maximum is distinct from measured consumption. These historical
+results do not establish gaming gains or a safe sustained regulator limit.
+See [measurements and conditions](docs/results.md),
+[research history](docs/history.md) and [related work](docs/prior-art.md).
 
 ## Install and check
 
-- [NixOS](docs/install-nixos.md): the reference integration. This repository is a flake whose only output is the module (`inputs.gpu-power-policy.nixosModules.default`); it declares no inputs of its own and builds against yours.
-- [Other distributions](docs/install-other-distros.md): untested porting notes. The kernel patch, launcher and target filter are not NixOS-specific; the boot image is pinned to one board, and the NVML hooks need re-pinning (one `objdump` check).
+Benchmarks were run on the reference laptop. Subsequent tool changes have
+passed automated tests but have not been rerun on hardware.
 
-Run the CPU tests and lint checks in the pinned environment:
+**Use on AC under supervision.** The installed filter does not handle battery
+operation. A rejected boot image can prevent GPU initialization until the edit
+is disabled. Read [safety and recovery](SAFETY.md),
+[known issues](CHANGELOG.md#known-issues) and the
+[validation status](PROVENANCE.md#validation) before installing.
+
+- [Install on NixOS](docs/install-nixos.md)
+- [Other distributions: untested porting guidance](docs/install-other-distros.md)
+- [Check the setup and run experiments](tools/README.md)
+- [Boot patch and launcher reference](module/README.md)
+
+From the repository root, run the CPU checks without accessing the GPU:
 
 ```sh
-nix-shell --run './lint.sh && ./test.sh'
+nix-shell --option max-jobs 1 --option cores 2 --run './lint.sh && ./test.sh'
 ```
 
-These checks do not access the GPU. They do not replace hardware validation.
+For an unsupported board, submit a [stock-system report](.github/ISSUE_TEMPLATE/board-report.md).
+No patched driver or firmware upload is needed.
 
 ## License
 
-[MIT](LICENSE), with NVIDIA notices and patch/build terms described there.
-Research references are credited in [prior art](docs/prior-art.md).
+[MIT](LICENSE), with NVIDIA patch/build terms in [NOTICE.md](NOTICE.md).
 No NVIDIA firmware, VBIOS images or board schematics are distributed here.

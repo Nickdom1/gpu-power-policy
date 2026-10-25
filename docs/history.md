@@ -58,6 +58,8 @@ and score comparison are already published in [results.md](results.md) and
 
 The [source manifest](history-evidence/source-manifest.json) identifies each
 original commit, blob, file hash, recorded author/committer date and export method.
+Private repository names and source paths are omitted; source hashes and recorded
+timestamps are unchanged.
 H14 omits attachment paths, boot identifiers, temporary directories and internal
 instructions. Its retained values are unchanged. H24 is copied byte for byte.
 The original development repository is private; its Git objects and omitted

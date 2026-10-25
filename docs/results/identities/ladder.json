@@ -1,7 +1,7 @@
 {
-  "boot_id": "bfb72573-dc15-4862-8e76-23a640b0f1b2",
+  "boot_id": "reference-boot-2026-10-24",
   "cap_ma": 114000,
-  "design": "attack-plan.md 4.2 S1 C-1/Null/UP",
+  "design": "experiment plan 4.2 S1 C-1/Null/UP",
   "floor_ma": 94000,
   "image_mode": 4,
   "nvml_sha256": "5176dd3ee63d5be9be66514a057fbcffb393ff46a0289f96fe1b923112967181",

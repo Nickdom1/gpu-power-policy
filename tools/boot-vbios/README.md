@@ -1,15 +1,33 @@
-# boot-vbios
+# Boot-VBIOS inspection
 
-Read the VBIOS image the patched driver retained at boot, and decode its power-policy table offline. No ROM access and no GPU request. This is optional developer tooling, unused by install, smoke, hold and ladder checks.
+Copy the VBIOS image retained by the patched driver at boot, then decode its
+power-policy table offline. The collector reads the retained copy; it does not
+access PCI ROM or issue a GPU request. This optional research tool is not needed
+for installation, smoke tests, holds or the ladder.
 
-On NixOS, set `hardware.pt516GpuPower.captureBootVbios = true`, rebuild and reboot
-to retain the original image (about 600 KB) behind a root-only proc node. Capture
-is disabled by default. The collector and decoder remain pinned to the reference
-board; they do not enable support for another GPU.
+On NixOS, set `hardware.pt516GpuPower.captureBootVbios = true`, rebuild and
+reboot as described in the [installation guide](../../docs/install-nixos.md).
+This retains the original image (about 600 KB) behind a root-only proc node.
+Capture is disabled by default, and the tools remain pinned to the reference
+board and driver.
+
+From the repository root, choose an output directory that does not already exist:
 
 ```sh
-sudo python3 collect-boot-vbios.py --output-dir /var/tmp/vbios   # copies /proc/driver/nvidia/gpus/0000:01:00.0/boot_vbios (needs NVreg_CaptureBootVbios=1)
-python3 inspect-saved-vbios.py /var/tmp/vbios                   # decodes the BIT 'P' power-policy table: index, type, min/rated/max per policy
+sudo python3 tools/boot-vbios/collect-boot-vbios.py --output-dir /var/tmp/vbios
 ```
 
-The decoder accepts only the table layout seen on this board (version 3, 44-byte header, 71-byte entries). On another board it reports what it cannot parse instead of guessing. Keep captured images private; they are firmware.
+Expect `"complete_read": true` and `"state": "captured"` in `capture.json`,
+plus `snapshot.bin` and `flash-copy.bin`. The directory is private to root,
+so use root to read it for offline inspection as well:
+
+```sh
+sudo python3 tools/boot-vbios/inspect-saved-vbios.py /var/tmp/vbios
+```
+
+The decoder prints JSON containing the image checks and power-policy table.
+It accepts the observed version-3 layout with a 44-byte header and 71-byte
+entries. If the collector refuses, inspect `capture.json` and check the capture
+setting and running identity. If the decoder refuses, retain the files and
+investigate the reported mismatch; do not bypass the checks or treat a partial
+capture as a valid image. Keep captured images private; they are firmware.

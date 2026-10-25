@@ -409,7 +409,7 @@ class Sitting:
                     % (p2["maximum"], p13["maximum"])
                 )
                 if seed_ok and p2_ok
-                else "FAIL: seed or runtime differs from stock; do NOT raise anything this boot (plan 1.4)"
+                else "FAIL: seed or runtime differs from stock; do NOT raise anything this boot"
             )
         else:
             checks["verdict"] = "mode 3 reference: " + (

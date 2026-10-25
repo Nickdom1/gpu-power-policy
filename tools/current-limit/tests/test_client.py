@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 HERE = Path(__file__).resolve().parent
 TOOL = HERE.parent
@@ -451,7 +452,7 @@ FURMARK_LOG = """(17:03:18)\tFurMark 2.10.2.0
 
 
 class WitnessAndHoldTests(unittest.TestCase):
-    """Renderer/placement/frame-log witnesses (issues 2-4 of 2026-10-24) and the --hold ABBA mode."""
+    """Renderer, panel placement and completed ABBA benchmark validation."""
 
     def sitting(self, hold=None, seconds=120):
         out = Path(tempfile.mkdtemp(prefix="p13-wit-"))
@@ -542,6 +543,80 @@ class WitnessAndHoldTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ladder.Refused, "wrong GPU"):
             s.check_renderer()
+
+    def test_renderer_may_be_missing_only_during_startup(self):
+        s = self.sitting()
+        s.check_renderer()
+        with self.assertRaisesRegex(ladder.Refused, "renderer is missing"):
+            s.check_result()
+
+    def test_run_requires_final_renderer(self):
+        s = self.sitting()
+        s.schedule = []
+        s.original = b"fixture"
+        s.client = Mock(get=Mock(return_value=s.original))
+        (s.telemetry / "metadata.json").write_text('{"child":{"exit_status":0}}')
+        collector = Mock(returncode=0, poll=Mock(return_value=0))
+        with (
+            patch.object(s, "setup"),
+            patch.object(ladder.subprocess, "Popen", return_value=collector),
+            patch.object(ladder.policy, "check_witness_result"),
+            patch.object(ladder, "validate_witness", return_value={}),
+            patch.dict(ladder.os.environ),
+            self.assertRaisesRegex(ladder.Refused, "renderer is missing"),
+        ):
+            s.run()
+
+    def test_completed_hold_requires_valid_benchmark_fields(self):
+        valid = FURMARK_LOG % ("NVIDIA GeForce RTX 3080 Ti Laptop GPU", 10900, 120010)
+        for field in ("renderer", "SCORE", "duration"):
+            for value in (None, "", "invalid", "0", "-1"):
+                with self.subTest(field=field, value=value):
+                    s = self.sitting(hold=107000)
+                    lines = [
+                        line for line in valid.splitlines() if f"- {field} " not in line
+                    ]
+                    if value is not None:
+                        unit = (
+                            " ms"
+                            if field == "duration" and value in ("0", "-1")
+                            else ""
+                        )
+                        lines.append(f"- {field} : {value}{unit}")
+                    (s.telemetry / "workload/furmark-furmark.log").write_text(
+                        "\n".join(lines)
+                    )
+                    with self.assertRaises(ladder.Refused):
+                        s.check_result()
+                    with self.assertRaises(ladder.Refused):
+                        s.analyze_hold()
+
+    def test_completed_hold_duration_matches_request(self):
+        for duration in (118999, 121001, 600000):
+            with self.subTest(duration=duration):
+                s = self.sitting(hold=107000)
+                (s.telemetry / "workload/furmark-furmark.log").write_text(
+                    FURMARK_LOG
+                    % ("NVIDIA GeForce RTX 3080 Ti Laptop GPU", 10900, duration)
+                )
+                with self.assertRaisesRegex(ladder.Refused, "duration differs"):
+                    s.check_result()
+
+    def test_duration_requires_milliseconds(self):
+        s = self.sitting(hold=107000)
+        text = FURMARK_LOG % ("NVIDIA GeForce RTX 3080 Ti Laptop GPU", 10900, 120000)
+        (s.telemetry / "workload/furmark-furmark.log").write_text(
+            text.replace("120000 ms", "120000 seconds")
+        )
+        with self.assertRaisesRegex(ladder.Refused, "duration_ms"):
+            s.check_result()
+
+    def test_completed_hold_accepts_timing_overhead(self):
+        s = self.sitting(hold=107000)
+        (s.telemetry / "workload/furmark-furmark.log").write_text(
+            FURMARK_LOG % ("NVIDIA GeForce RTX 3080 Ti Laptop GPU", 10900, 120010)
+        )
+        self.assertEqual(s.check_result()["duration_ms"], 120010)
 
     def test_hold_analysis_uses_score(self):
         s = self.sitting(hold=107000)

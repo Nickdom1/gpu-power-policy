@@ -412,9 +412,9 @@ class Sitting:
             raise Refused("final A61A differs from the original block")
 
     def last_resort_restore(self):
-        """The guarded restore refused (the live control block changed outside the limit word).
-        Write the block read at setup, which carries 99000, verify it, and say loudly if the
-        limit may still be raised. A reboot re-seeds 99 A from the VBIOS in any case."""
+        """After any normal-restore exception, try the setup-time block carrying 99000.
+        Verify A61A control readback only, not A619 firmware status, and report failure.
+        A reboot re-seeds 99 A from the VBIOS."""
         try:
             self.event("last-resort restore: writing the setup-time block")
             status, _ = self.client.set(bytes(self.original))
@@ -528,13 +528,12 @@ class Sitting:
             raise Refused("workload failed")
         policy.check_witness_result(self.telemetry)
         self.geometry = validate_witness(self.telemetry)
-        self.renderer = self.furmark_result().get("renderer")
-        self.check_renderer()
+        self.check_result()
 
-    # ---- placement and renderer witnesses (fail closed, before any further SET)
+    # ---- workload placement and renderer checks
     def check_placement(self, elapsed):
         """At +30 s the desktop witness has captured the FurMark window; it must be fullscreen on the
-        panel (eDP) with the panel's logical bounds. Check the renderer early."""
+        panel (eDP) with the panel's logical bounds. Check any available renderer output."""
         if self.witness_checked or elapsed < 36:
             return
         path = self.telemetry / "witness/geometry-30s/result.json"
@@ -551,17 +550,36 @@ class Sitting:
         )
         self.check_renderer()
 
-    def check_renderer(self):
-        """FurMark prints its device at start-up; refuse anything but the RTX 3080 Ti."""
+    def check_renderer(self, *, required=False):
+        """Check the GPU name; the workload log may be unavailable until collection ends."""
         if self.renderer is None:
             self.renderer = self.furmark_result().get("renderer")
         if self.renderer is None:
-            return  # not printed yet; the end-of-run check is mandatory
+            if required:
+                raise Refused("FurMark renderer is missing from the completed run")
+            return
         if "NVIDIA" not in self.renderer or "3080 Ti" not in self.renderer:
             raise Refused(
                 "FurMark renderer is %r, not the RTX 3080 Ti; workload landed on the wrong GPU"
                 % self.renderer
             )
+
+    def check_result(self):
+        """Require a renderer for every loaded run and a complete benchmark for a hold."""
+        result = self.furmark_result()
+        self.renderer = result.get("renderer")
+        self.check_renderer(required=True)
+        if self.hold_ma is not None:
+            for key in ("score", "duration_ms"):
+                value = result.get(key)
+                if type(value) is not int or value <= 0:
+                    raise Refused(f"FurMark {key} must be a positive integer")
+            # Allow log timing overhead, but reject a truncated or different benchmark.
+            if abs(result["duration_ms"] - self.seconds * 1000) > 1000:
+                raise Refused(
+                    "FurMark duration differs from the requested run by more than 1 s"
+                )
+        return result
 
     def furmark_result(self):
         """Parse FurMark's own log: renderer, SCORE, FPS min/avg/max, duration. Missing fields -> absent keys."""
@@ -586,7 +604,9 @@ class Sitting:
                         int(x) for x in value.split("/")
                     ]
                 elif name == "duration":
-                    out["duration_ms"] = int(value.split()[0])
+                    duration, unit = value.split()
+                    if unit == "ms":
+                        out["duration_ms"] = int(duration)
             except ValueError:
                 continue
         return out
@@ -714,7 +734,7 @@ class Sitting:
     def analyze_hold(self):
         """Hold mode: the whole-run FurMark score is the outcome (a frame count over the scored
         duration). SM/power/P13/P2 medians over the held interval are context."""
-        fm = self.furmark_result()
+        fm = self.check_result()
         a, b = 10.0, self.workload_s - 10.0
         gpu = [
             r

@@ -15,5 +15,6 @@ pkgs.mkShell {
     pkgs.ruff
     pkgs.deadnix
     pkgs.nixfmt
+    pkgs.actionlint
   ];
 }

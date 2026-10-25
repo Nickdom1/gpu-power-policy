@@ -8,9 +8,7 @@
 let
   cfg = config.hardware.pt516GpuPower;
   base = config.boot.kernelPackages.nvidiaPackages.stable;
-  # Mode 3 (default generation) keeps exactly the reviewed patch list, so its
-  # driver store path is unchanged. The envelope adds one patch on top of it
-  # and is built only for the one-shot specialisation.
+  # Mode 4 adds the current-limit envelope patch to the mode-3 driver.
   patched = base.open.overrideAttrs (old: {
     pname = if cfg.mode == 4 then "nvidia-open-pt516-envelope" else "nvidia-open-pt516-policy-125";
     patches =
@@ -45,13 +43,13 @@ in
       ];
       default = 3;
       description = ''
-        Boot-image mode. 3 is the reviewed 125 W image. 4 is the experiment
+        Boot-image mode. 3 is the 125 W image. 4 is the experiment
         envelope (policy 2 maximum 140 W, policy 13 maximum 120 A, rated values
         unchanged), which is what the runtime current-limit tool needs in order
         to raise policy 13 above 99 A. Because the rated values are untouched,
         mode 4 still boots at 99 A and a 125 W target; set it here for an
         ordinary entry, or leave this at 3 and use `envelopeSpecialisation`
-        if the default entry's driver must stay byte-identical.
+        to keep mode 3 as the default entry.
       '';
     };
     captureBootVbios = lib.mkOption {
@@ -73,9 +71,7 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        # The patches, the NVML hook offsets and the identity checks were made against
-        # NVIDIA 595.99.02 (open module base e394a404) on Linux 7.2.7. The author's
-        # nixpkgs pin was ecc58f32d1069a3e3f8a991e2233d365689f748d.
+        # Driver and NVML hooks are pinned together; see provenance.json.
         assertion =
           config.boot.kernelPackages.kernel.modDirVersion == "7.2.7" && base.version == "595.99.02";
         message = "gpu-power-policy requires NVIDIA 595.99.02 on Linux 7.2.7; update the patches, provenance.json and the NVML hooks together before changing that pin.";
@@ -94,7 +90,7 @@ in
       configuration = {
         system.nixos.tags = [ "gpu-envelope" ];
         hardware.pt516GpuPower.mode = lib.mkForce 4;
-        # The envelope is a one-shot experiment entry, never a nested variant.
+        # Avoid recursively generating a specialisation inside itself.
         hardware.pt516GpuPower.envelopeSpecialisation = lib.mkForce false;
       };
     };

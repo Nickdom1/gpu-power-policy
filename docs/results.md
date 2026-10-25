@@ -54,7 +54,8 @@ Before any value changed, one identity write (99 000 → 99 000) through the pri
 ## About the per-run files
 
 The seven `summary.txt` and `result.json` files are verbatim historical outputs.
-Identical `identity.json` files are stored once, also verbatim:
+Identical `identity.json` files are stored once, with the metadata substitutions
+described below:
 
 | Runs | Identity |
 |---|---|
@@ -63,6 +64,10 @@ Identical `identity.json` files are stored once, also verbatim:
 | [B1](results/abba-B1-107000/), [B2](results/abba-B2-107000/) | [hold-107.json](results/identities/hold-107.json) |
 
 The smoke identity contains the ladder schedule by an old reporting bug; smoke did
-not execute it. `S1-A`/`S1-B` and `design` strings are historical experiment labels.
-Per-boot UUIDs are retained to identify the shared boot. These runs predate the
-portability and release cleanup; the current tools have CPU validation only.
+not execute it. `S1-A`/`S1-B` are historical experiment labels. In the three identity
+files, `boot_id` uses the same anonymous label, `reference-boot-2026-10-24`, to
+preserve the shared-boot relationship. The `design` descriptions replace the
+private plan filename with "experiment plan" while retaining its section numbers,
+experiment labels and settings. All other identity fields, the summaries and the
+results are unchanged. See [validation status](../PROVENANCE.md#validation) for
+the relationship between these measurements and the public tools.
