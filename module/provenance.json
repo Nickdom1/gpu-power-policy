@@ -1,0 +1,8 @@
+{
+  "driver_base": "e394a404108a9ce5bba988c1dddf694dabbd4a43",
+  "kernel": "7.2.7",
+  "driver": "595.99.02",
+  "module_srcversion": "FE193E9810BEB3EED2D3CE9",
+  "nvml_sha256": "5176dd3ee63d5be9be66514a057fbcffb393ff46a0289f96fe1b923112967181",
+  "envelope_module_srcversion": "CEB9B11F44C43430888F858"
+}

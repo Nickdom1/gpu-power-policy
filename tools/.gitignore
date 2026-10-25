@@ -1,0 +1,2 @@
+# GC-root symlinks into /nix/store made by prepare-tools.sh
+.tools/

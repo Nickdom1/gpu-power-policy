@@ -1,0 +1,89 @@
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 Nicholas DeTello
+Modifies NVIDIA open-gpu-kernel-modules e394a404108a9ce5bba988c1dddf694dabbd4a43
+(595.99.02). The upstream files touched are SPDX MIT, Copyright (c) NVIDIA
+CORPORATION & AFFILIATES; context lines remain NVIDIA's under that notice.
+
+--- a/kernel-open/nvidia/nv-boot-policy.c
++++ b/kernel-open/nvidia/nv-boot-policy.c
+@@ -7,15 +7,21 @@
+ #define POLICY_RAW_SIZE 600576U
+ #define POLICY_SIZE 516608U
+ #define POLICY_MAX_OFFSET 0x735e8U
++/* Policy 13 (core current, mA): rated and maximum words of entry 13 in the
++ * same compact table (0x73524 + 44 + 13 * 71 + 6 / + 10). */
++#define POLICY_P13_RATED_OFFSET 0x738f1U
++#define POLICY_P13_MAX_OFFSET 0x738f5U
+ 
+ /* Load-time only: 1 transports unchanged policy; 2 raises its maximum to 120 W;
+- * 3 raises its maximum to 125 W. No mode issues a runtime Set request.
+- * The ordinary boot remains mode 0.
++ * 3 raises its maximum to 125 W; 4 is the one-shot envelope: policy 2 maximum
++ * 140 W and policy 13 maximum 120 A, both rated values unchanged, so the boot
++ * seeds stay 80 W / 99 A and a root runtime request is needed to go higher.
++ * No mode issues a runtime Set request. The ordinary boot remains mode 0.
+  */
+ static unsigned int nv_boot_policy_mode;
+ module_param_named(NVreg_Pt516BootPolicy, nv_boot_policy_mode, uint, 0400);
+ MODULE_PARM_DESC(NVreg_Pt516BootPolicy,
+-    "PT516 exact-image experiment: 0 off, 1 compact control, 2 compact 120W maximum, 3 compact 125W maximum");
++    "PT516 exact-image experiment: 0 off, 1 compact control, 2 compact 120W maximum, 3 compact 125W maximum, 4 compact envelope 140W/120A maxima");
+ 
+ static const unsigned char policy_raw_sha256[32] = {
+     0x13,0x05,0x19,0x02,0xcd,0x7d,0xe8,0x84,0x71,0x89,0xdf,0x50,0xa4,0xe9,0xa2,0xd8,
+@@ -32,7 +38,7 @@
+ NvBool NV_API_CALL os_boot_policy_queue_enabled(void *gpu)
+ {
+     nv_state_t *nv = gpu;
+-    return nv != NULL && nv_boot_policy_mode >= 1 && nv_boot_policy_mode <= 3 &&
++    return nv != NULL && nv_boot_policy_mode >= 1 && nv_boot_policy_mode <= 4 &&
+         nv->pci_info.domain == 0 && nv->pci_info.bus == 1 &&
+         nv->pci_info.slot == 0 && nv->pci_info.function == 0 &&
+         nv->pci_info.vendor_id == 0x10de && nv->pci_info.device_id == 0x2460;
+@@ -60,7 +66,7 @@
+     *out_size = 0;
+     if (nv_boot_policy_mode == 0)
+         return NV_OK;
+-    if (nv_boot_policy_mode > 3 || nv == NULL ||
++    if (nv_boot_policy_mode > 4 || nv == NULL ||
+         nv->pci_info.domain != 0 || nv->pci_info.bus != 1 ||
+         nv->pci_info.slot != 0 || nv->pci_info.function != 0 ||
+         nv->pci_info.vendor_id != 0x10de || nv->pci_info.device_id != 0x2460 ||
+@@ -80,6 +86,8 @@
+     sha256(copy, POLICY_SIZE, digest);
+     if (memcmp(digest, policy_compact_sha256, sizeof(digest)) != 0 ||
+         memcmp(copy + POLICY_MAX_OFFSET, "\x38\xc1\x01\x00", 4) != 0 ||
++        memcmp(copy + POLICY_P13_RATED_OFFSET, "\xb8\x82\x01\x00", 4) != 0 ||
++        memcmp(copy + POLICY_P13_MAX_OFFSET, "\xb8\x82\x01\x00", 4) != 0 ||
+         copy[POLICY_SIZE - 1] != 0x63)
+     {
+         os_free_mem(copy);
+@@ -100,6 +108,19 @@
+         copy[POLICY_MAX_OFFSET + 1] = 0xe8;
+         copy[POLICY_SIZE - 1] = 0x2c;
+     }
++    else if (nv_boot_policy_mode == 4)
++    {
++        /* Policy 2 maximum 115000 -> 140000 mW (0x222e0; the high byte changes too)
++         * and policy 13 maximum 99000 -> 120000 mA (0x1d4c0). Rated words, the
++         * role map, policy 2 coupling bytes and every other entry stay.
++         * Checksum: 0x63 - (0xa8 - 0x9f + 0x01 + 0x08 + 0x52) = 0xff (mod 256). */
++        copy[POLICY_MAX_OFFSET] = 0xe0;
++        copy[POLICY_MAX_OFFSET + 1] = 0x22;
++        copy[POLICY_MAX_OFFSET + 2] = 0x02;
++        copy[POLICY_P13_MAX_OFFSET] = 0xc0;
++        copy[POLICY_P13_MAX_OFFSET + 1] = 0xd4;
++        copy[POLICY_SIZE - 1] = 0xff;
++    }
+     if (policy_sum8(copy, 0xfe00) || policy_sum8(copy + 0xfe00, 0x5600) ||
+         policy_sum8(copy + 0x15400, POLICY_SIZE - 0x15400))
+     {
+@@ -127,7 +148,7 @@
+ NvBool NV_API_CALL os_boot_policy_large_registry(void *gpu, NvU32 table_size)
+ {
+     nv_state_t *nv = gpu;
+-    return nv != NULL && nv_boot_policy_mode >= 1 && nv_boot_policy_mode <= 3 &&
++    return nv != NULL && nv_boot_policy_mode >= 1 && nv_boot_policy_mode <= 4 &&
+         READ_ONCE(NV_GET_NVL_FROM_NV_STATE(nv)->boot_policy_registered) &&
+         table_size >= POLICY_SIZE && table_size <= POLICY_SIZE + 65536U;
+ }

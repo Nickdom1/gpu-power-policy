@@ -1,0 +1,172 @@
+{
+  "id": "H14",
+  "module_srcversion": "8DFFCA76EFF4E6157F1A90C",
+  "mode": 2,
+  "command_queue_bytes": 1572864,
+  "prepared_image_sha256": "2e05d68ee0793dfa57f47e09d95f23cdf959726d7fa936d423a585179fd8b4b3",
+  "host_registry_status": "0x0",
+  "reported_limits": {
+    "default_W": 80.0,
+    "constraints_W": [
+      1.0,
+      120.0
+    ],
+    "requested": "NOT_SUPPORTED",
+    "enforced_W": 80.0,
+    "draw_W": 17.7
+  },
+  "readback_exit": 0,
+  "interpretation": "Boot/readback succeeded and reported policy maximum changed to 120000 mW. Combined source marker and policy evidence support override consumption. Not exact live-image attestation, Set acceptance or sustained 120 W proof.",
+  "power_policy_snapshot": {
+    "library_sha256": "5176dd3ee63d5be9be66514a057fbcffb393ff46a0289f96fe1b923112967181",
+    "cache_ready": 1,
+    "cache_status": 0,
+    "policy_mask": "0x0007f21f",
+    "primary_role_1_index": 255,
+    "fallback_role_8_index": 2,
+    "second_fallback_role_3_index": 2,
+    "module_role_11_index": 255,
+    "role_to_policy_0_through_18": [
+      255,
+      255,
+      255,
+      2,
+      15,
+      14,
+      255,
+      0,
+      2,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255
+    ],
+    "policies": [
+      {
+        "index": 0,
+        "type": 16,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      },
+      {
+        "index": 1,
+        "type": 3,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 1001000,
+        "max_raw": 1001000
+      },
+      {
+        "index": 2,
+        "type": 0,
+        "unit": 0,
+        "min_raw": 1000,
+        "rated_raw": 80000,
+        "max_raw": 120000
+      },
+      {
+        "index": 3,
+        "type": 15,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      },
+      {
+        "index": 4,
+        "type": 15,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      },
+      {
+        "index": 9,
+        "type": 4,
+        "unit": 1,
+        "min_raw": 1000,
+        "rated_raw": 8000,
+        "max_raw": 8000
+      },
+      {
+        "index": 12,
+        "type": 16,
+        "unit": 1,
+        "min_raw": 1000,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      },
+      {
+        "index": 13,
+        "type": 15,
+        "unit": 1,
+        "min_raw": 1,
+        "rated_raw": 99000,
+        "max_raw": 99000
+      },
+      {
+        "index": 14,
+        "type": 16,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      },
+      {
+        "index": 15,
+        "type": 16,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      },
+      {
+        "index": 16,
+        "type": 4,
+        "unit": 0,
+        "min_raw": 10000,
+        "rated_raw": 37500,
+        "max_raw": 37500
+      },
+      {
+        "index": 17,
+        "type": 4,
+        "unit": 0,
+        "min_raw": 1,
+        "rated_raw": 250000,
+        "max_raw": 250000
+      },
+      {
+        "index": 18,
+        "type": 15,
+        "unit": 1,
+        "min_raw": 1,
+        "rated_raw": 5001000,
+        "max_raw": 5001000
+      }
+    ],
+    "a618_sha256": "31a6730a861a6a832ca8e58e67d67818e436554c909df75ed1414a89cd09ea3f"
+  },
+  "baseline_comparison": {
+    "baseline_sha256": "baadb74f8cd850b85a930da7b144450feee7fd407eb8a8f3353553ac6e26b1b8",
+    "policy_mask_and_role_map_unchanged": true,
+    "reported_policies_compared": 13,
+    "differences": [
+      {
+        "policy": 2,
+        "field": "max_raw",
+        "before": 115000,
+        "after": 120000
+      }
+    ],
+    "scope": "Decoded reported fields only; H14 full raw A618 was not read."
+  }
+}
