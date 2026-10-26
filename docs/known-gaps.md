@@ -20,12 +20,13 @@ Each item names the intended fix; none is started unless marked.
 5. **Battery.** The boot target applies on battery too. Intended fix: an `onBattery` option
    that passes the stock target through when the AC adapter is offline, identified by supply
    type rather than "any supply offline".
-6. **Other distributions.** No install path for the patched module, firmware file, powerd
-   drop-in and config outside NixOS. The CLI's booted-module check reads a NixOS path.
-   In progress: a Fedora install script, tested in a VM with the GPU passed through.
+6. **Other distributions.** Fedora 43 has an installer, tested in a GPU-passthrough VM
+   (`docs/install.md`, Fedora section). Still missing: a run on bare-metal Fedora with Dynamic Boost present,
+   module signing for Secure Boot, an automatic rebuild when the kernel updates, and ports to
+   Ubuntu and Arch (package manager and initramfs tool differ; the rest is shared).
 7. **Diagnostics.** `status` prints raw policy tables; the firmware arbitration status (A619)
    is captured by `dump` but not decoded. Intended fix: decode enough of it to name which
-   policy is binding.
+   policy is binding, as the research branch's `tools/policy-status/codec.py` did for 595.
 8. **Not validated:** sustained operation at the image ceilings, games, suspend and resume,
    battery transitions, multi-GPU systems, any board other than the one in the README.
 9. **Tests and CI.** CPU tests exist; no CI workflow and no NixOS VM test yet. Intended fix: a

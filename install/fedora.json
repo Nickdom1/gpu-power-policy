@@ -1,0 +1,9 @@
+{
+  "device": null,
+  "vbios": null,
+  "powerCeilingWatts": 140,
+  "powerDefaultWatts": 80,
+  "currentCeilingMilliamps": 120000,
+  "currentRatedMilliamps": 99000,
+  "powerdTargetWatts": null
+}

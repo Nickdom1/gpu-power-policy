@@ -86,12 +86,12 @@ GPU reinitialisation or reboot. A target must lie between 1 W and the image's po
 A current must lie between the rated value and the image's current ceiling, narrowed by the
 firmware's reported bounds; you cannot go below rated.
 
-## Install on NixOS
+## Install
 
-Needs `hardware.nvidia.open`, `hardware.nvidia.dynamicBoost.enable`, the `nvidia` video
-driver, `allowUnfree`, and a `boot.kernelPackages` whose `nvidiaPackages.latest` is exactly
-615.71.09 (nixpkgs `58a20b0a` has it with Linux 7.2.7). Full walkthrough:
-[docs/install.md](docs/install.md).
+NixOS and Fedora 43; both in [docs/install.md](docs/install.md). On NixOS it needs
+`hardware.nvidia.open`, `hardware.nvidia.dynamicBoost.enable`, the `nvidia` video driver,
+`allowUnfree`, and a `boot.kernelPackages` whose `nvidiaPackages.latest` is exactly 615.71.09
+(nixpkgs `58a20b0a` has it with Linux 7.2.7).
 
 1. **Bootstrap.** Import `gpu-power-policy.nixosModules.default`, enable it with only
    `device = "0000:01:00.0"` (your GPU) and `vbios = null`, rebuild, reboot, then
@@ -118,11 +118,6 @@ hardware.gpuPowerPolicy = {
 The values above are the PT516-52s's; read yours from `nvbios inspect` and keep ceilings
 close to stock. Rollback is the previous generation, or `enable = false` and a reboot.
 
-## Other Linux distributions
-
-Coming soon, Fedora first (where the upstream loader is tested). The runtime is plain Python
-and C; missing is the install path for the patched module, firmware file and powerd drop-in.
-
 ## Support boundary
 
 Known gaps and their intended fixes: [docs/known-gaps.md](docs/known-gaps.md).
@@ -145,8 +140,9 @@ Known gaps and their intended fixes: [docs/known-gaps.md](docs/known-gaps.md).
 `nix flake check` runs the CPU tests; `nix build .#kernel-module` builds the patched driver.
 For a report, attach `sudo gpu-power dump DIR` (raw policy replies, no personal data),
 `nvidia-smi -q -d POWER`, the `vbios_override` kernel log line, and
-`nvbios inspect` of your ROM. Earlier work in this space is mapped in the research branch's
-`docs/prior-art.md`.
+`nvbios inspect` of your ROM. The research that led here, with its dated history and a map of
+related work, is preserved on the
+[research/v0.1 branch](https://github.com/Nickdom1/gpu-power-policy/tree/research/v0.1).
 
 ## Credits and licence
 

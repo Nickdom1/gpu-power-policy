@@ -1,4 +1,6 @@
-# Install on NixOS
+# Install
+
+## NixOS
 
 Prerequisites: `hardware.nvidia.open = true`, `hardware.nvidia.dynamicBoost.enable = true`,
 `services.xserver.videoDrivers = [ "nvidia" ]`, `nixpkgs.config.allowUnfree = true`, and a
@@ -80,3 +82,54 @@ attribute (`echo 1 > .../rom; cat rom; echo 0 > .../rom`; EIO or a short file on
 laptops), `nvflash --save` on Linux, or GPU-Z on Windows. Validate it with `nvbios inspect`
 as above. The export was hardware-validated on 2026-10-26
 ([record](evidence/2026-10-26-boot-vbios-export.json)).
+
+## Fedora 43
+
+Same two rounds as NixOS, driven by a JSON config with the same fields. Tested in a Fedora 43
+VM with the GPU passed through, kernel 7.2.11, driver 615.71.09
+([record](evidence/2026-10-26-fedora43-vm.json)); the powerd target acts only on a real
+laptop, since a VM exposes no Dynamic Boost firmware.
+
+The patches change NVIDIA's resource manager, which the `.run` kernel-module build and akmods
+ship as a prebuilt object. The installer therefore builds the full
+[open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules/tree/615.71.09)
+source for the running kernel, installs matching userspace from the `.run` with
+`--no-kernel-modules`, and uses the editor as a Python package pinned to `edf0f483`.
+
+Requirements: Fedora 43 x86_64, development files for the running kernel, Secure Boot off (the
+installer does not sign modules), no packaged NVIDIA driver installed, a text console with the
+graphical session stopped, and a way back to your previous driver. The module is built for the
+running kernel only; rerun the installer after a kernel update.
+
+```sh
+cp install/fedora.json fedora.json       # "vbios": null for the first round
+sudo bash install/fedora.sh fedora.json && sudo reboot
+sudo gpu-power rom /var/lib/gpu.rom
+```
+
+Then set `vbios` and your limits (relative paths are relative to the config file; `device`
+null picks the only NVIDIA GPU, set it on multi-GPU systems), rerun the installer, reboot, and
+verify as for NixOS:
+
+```json
+{
+  "device": null,
+  "vbios": "/var/lib/gpu.rom",
+  "powerCeilingWatts": 140,
+  "powerDefaultWatts": 80,
+  "currentCeilingMilliamps": 120000,
+  "currentRatedMilliamps": 99000,
+  "powerdTargetWatts": 125
+}
+```
+
+Installed files: the payload under `/lib/firmware/nvidia/615.71.09/vbios-override/`, with a
+dracut include in `/etc/dracut.conf.d/` and the modprobe options in `/etc/modprobe.d/`, both
+named `gpu-power-policy.conf`; the CLI in `/usr/local/bin`, its modules and the shim in
+`/usr/local/lib/gpu-power`; `/etc/gpu-power-policy.json`; the powerd drop-in and the
+`gpu-power-policy-init` unit under `/etc/systemd/system/`; NVIDIA's D-Bus policy in
+`/etc/dbus-1/system.d/`.
+
+Rollback: set `vbios` and `powerdTargetWatts` to null, rerun, reboot; that removes the
+override and the units and keeps the ROM export. To remove the patched driver, reinstall the
+stock one, `depmod -a`, `dracut --force`, reboot.

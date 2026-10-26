@@ -10,6 +10,34 @@ spec.loader.exec_module(cli)
 
 
 class CliTests(unittest.TestCase):
+    def test_module_guard_preserves_nixos_and_rejects_unbooted_fedora_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            loaded = root / "version"
+            loaded.write_text(cli.VERSION)
+            booted = root / "booted"
+            gpu = root / "0000:01:00.0"
+            gpu.mkdir()
+            config = {"modinfo": "/modinfo", "device": gpu.name}
+            with patch.object(cli, "BOOTED_MODULES", booted), patch.object(cli, "LOADED_VERSION", loaded), \
+                    patch.object(cli, "PROC_GPUS", root), patch.object(cli.os, "geteuid", return_value=0), \
+                    patch.object(cli, "command_output",
+                                 side_effect=lambda *a: cli.VERSION if a[-2] == "version" else "1") as run:
+                # A newly installed module on disk is insufficient while the stock one is loaded.
+                with self.assertRaisesRegex(ValueError, "reboot"):
+                    cli.guard(config)
+                (gpu / "boot_vbios").touch()
+                cli.guard(config)
+                self.assertNotIn("-b", run.call_args.args)
+                self.assertIn(cli.os.uname().release, run.call_args.args)
+                booted.mkdir()
+                (gpu / "boot_vbios").unlink()
+                cli.guard(config)
+                self.assertEqual(run.call_args.args[1:3], ("-b", str(booted)))
+                loaded.write_text("595.71.05")
+                with self.assertRaisesRegex(ValueError, "loaded NVIDIA module"):
+                    cli.guard(config)
+
     def test_arguments_and_bounds(self):
         for command, value in (("target", "125"), ("target", "off"), ("current", "107000"), ("current", "off")):
             args = cli.parser().parse_args([command, value])

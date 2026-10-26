@@ -19,13 +19,16 @@ CONFIG = Path("/etc/gpu-power-policy.json")
 RUN = Path("/run/gpu-power-policy")
 PROC_GPUS = Path("/proc/driver/nvidia/gpus")
 PCI_DEVICES = Path("/sys/bus/pci/devices")
+BOOTED_MODULES = Path("/run/booted-system/kernel-modules")
+LOADED_VERSION = Path("/sys/module/nvidia/version")
 
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__, epilog=(
         "Target changes restart nvidia-powerd; target off removes the override. Current changes last "
         "until current off (rated), GPU reinitialization or reboot; off releases both. Current SET "
-        "requires a verified live 615 layout; dump and status are read-only. Boot values come from NixOS."))
+        "requires a verified live 615 layout; dump and status are read-only. Boot values come from the "
+        "install configuration."))
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("rom", help="export retained boot VBIOS (never overwrite)").add_argument("output", type=Path)
     sub.add_parser("status", help="raw policy tables, image selection and target state")
@@ -49,13 +52,18 @@ def command_output(*args):
 def guard(config):
     if os.geteuid() != 0:
         raise ValueError("run gpu-power as root")
-    if Path("/sys/module/nvidia/version").read_text().strip() != VERSION:
+    if LOADED_VERSION.read_text().strip() != VERSION:
         raise ValueError("loaded NVIDIA module must be " + VERSION)
-    # Resolve against the booted generation, not the newly switched userspace.
-    modinfo = [config["modinfo"], "-b", "/run/booted-system/kernel-modules", "-k", os.uname().release]
+    # NixOS retains the booted generation; other systems use the running kernel's tree.
+    modinfo = [config["modinfo"]]
+    if BOOTED_MODULES.is_dir():
+        modinfo += ["-b", str(BOOTED_MODULES)]
+    modinfo += ["-k", os.uname().release]
     if (command_output(*modinfo, "-F", "version", "nvidia") != VERSION or
             command_output(*modinfo, "-F", "vbios_override_per_gpu", "nvidia") != "1"):
         raise ValueError("booted NVIDIA module lacks vbios_override_per_gpu")
+    if not BOOTED_MODULES.is_dir() and not (PROC_GPUS / config["device"] / "boot_vbios").is_file():
+        raise ValueError("loaded NVIDIA module lacks boot VBIOS export; reboot into the patched module")
 
 
 def selection(log, bdf):
@@ -124,7 +132,7 @@ def run(args, config):
     if args.command == "rom":
         return export_rom(config, args.output)
     if args.command in ("target", "current", "off") and "output_sha256" not in config:
-        raise ValueError("bootstrap mode has no override image; configure vbios and rebuild first")
+        raise ValueError("bootstrap mode has no override image; configure vbios and reinstall or rebuild first")
     if args.command == "off":
         result = {}
         # Current can only have been raised on a staged image; otherwise there is nothing to restore.
