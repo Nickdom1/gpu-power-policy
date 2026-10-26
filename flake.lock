@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790125458,
+        "narHash": "sha256-nbmPIVbFz0Acku3z5fJwYoqMtEwiLWdrcLkEWJyz5U0=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "58a20b0a882fffd508ca4dad73836d76632792a3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "58a20b0a882fffd508ca4dad73836d76632792a3",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "vix-editor": "vix-editor"
+      }
+    },
+    "vix-editor": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792953022,
+        "narHash": "sha256-WpGAqD628rnEgCTmQkYAvNdP8dkZFXC9f1js6l8ziwY=",
+        "owner": "Panchovix",
+        "repo": "nvidia-vbios-vix-editor",
+        "rev": "edf0f483d8d4a3d7a578f941647c95b503ab9795",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Panchovix",
+        "repo": "nvidia-vbios-vix-editor",
+        "rev": "edf0f483d8d4a3d7a578f941647c95b503ab9795",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

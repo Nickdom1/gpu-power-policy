@@ -1,4 +1,0 @@
-{
-  "record_kind": "Selected excerpt from a contemporaneous investigation report, based on user-provided trace output; not the original trace.",
-  "excerpt": "public/HAL setter entry,\nsuccessful subdevice lookup, and command `0x2080e61e` with `0x1d4c0` (120000 mW)\nentering the RM wrapper. It returns RM `0x56`, translated into NVML status 3.\nBefore/after: default 80 W, bounds 1..115 W, Requested NOT_SUPPORTED, enforced\n80 W and reported draw 26.5 W. The request did not lower the limit; it was already\n80 W. No benchmark or >115 W result is implied."
-}

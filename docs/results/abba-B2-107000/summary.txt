@@ -1,6 +1,0 @@
-S1-A P13 LADDER: COMPLETE
-HOLD 107000 mA: FurMark SCORE 11378 over 120010 ms (94.809 frames/s); FPS min/avg/max [87, 95, 99]; renderer NVIDIA GeForce RTX 3080 Ti Laptop GPU
-context: SM median 990 MHz, GPU 124.7 W, P13 read 105.88 A (out 107), P2 read 124.8 W, header [(0,), (0, 12), (12,)], max 60.0 C
-MangoHud per-frame rows: 0
-P13 restored to 99000 and verified: True
-One arm of an ABBA; compare SCORE with its partner runs, not with history.

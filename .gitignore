@@ -1,7 +1,4 @@
+.direnv
+result*
 __pycache__/
-*.pyc
 .pytest_cache/
-result
-result-*
-runs/
-.tools/

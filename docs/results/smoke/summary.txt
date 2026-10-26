@@ -1,3 +1,0 @@
-S1-A P13 LADDER: COMPLETE
-SMOKE: image mode 4, cap 114000 mA, identity E61B SET rm_status=0x0, P13 after: limit 99000 / out 99000 / inputs [(254, 99000)] / table max 120000
-Transport proven: GET, privileged SET and status readback all round-trip. No value other than 99000 was written.

@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-26",
+  "host": "Predator (Acer PT516-52s, RTX 3080 Ti Laptop GPU)",
+  "implementation_commit": "ce2178a",
+  "driver": "615.71.09",
+  "device": "0000:01:00.0",
+  "mode": "configured image; unconditional capture, no export option",
+  "source": "User-provided output of sudo gpu-power rom /tmp/check.rom and sudo gpu-power status after reboot",
+  "expected_sha256": "13051902cd7de8847189df50a4e9a2d84d5fded6215467895ca550198491adb1",
+  "capture": {
+    "size": 600576,
+    "sha256": "13051902cd7de8847189df50a4e9a2d84d5fded6215467895ca550198491adb1",
+    "expansion_rom_offset": 83968,
+    "vbios_version": "94.03.19.00.9F"
+  },
+  "image_selection": {
+    "state": "selected",
+    "line": "NVRM: vbios_override: GPU 0000:01:00 selected: 516608 bytes from offset 0x0 staged for GSP",
+    "meaning": "host staging; verify firmware limits separately"
+  },
+  "maximum_power_watts": 140,
+  "target_mw": 125000,
+  "result": "passed",
+  "scope": "Hardware validates automatic export and preserved configured override on this GPU. Bootstrap mode was evaluated in Nix; a fresh vbios=null installation was not exercised on hardware."
+}

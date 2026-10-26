@@ -1,0 +1,271 @@
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 Nicholas DeTello
+Capture-only port from gpu-power-policy-github/module/policy-shim.patch to
+NVIDIA open-gpu-kernel-modules 615.71.09. MIT terms are in ../LICENSE.
+Upstream context is Copyright (c) NVIDIA CORPORATION & AFFILIATES, MIT.
+
+diff --git a/kernel-open/common/inc/nv-linux.h b/kernel-open/common/inc/nv-linux.h
+--- a/kernel-open/common/inc/nv-linux.h
++++ b/kernel-open/common/inc/nv-linux.h
+@@ -1324,6 +1324,13 @@
+     /* proc directory information */
+     struct proc_dir_entry *proc_dir;
+ 
++    /* First extraction attempt, protected by nv_boot_vbios_lock. */
++    void *boot_vbios_data;
++    NvU32 boot_vbios_state;
++    NvU32 boot_vbios_rm_status;
++    NvU32 boot_vbios_size;
++    NvU32 boot_vbios_expansion_offset;
++
+     NvU32 minor_num;
+     struct nv_linux_state_s *next;
+ 
+diff --git a/kernel-open/common/inc/nv-proto.h b/kernel-open/common/inc/nv-proto.h
+--- a/kernel-open/common/inc/nv-proto.h
++++ b/kernel-open/common/inc/nv-proto.h
+@@ -37,6 +37,8 @@
+ int         nv_procfs_init              (void);
+ void        nv_procfs_exit              (void);
+ void        nv_procfs_add_warning       (const char *, const char *);
++void        nv_boot_vbios_add_proc      (nv_linux_state_t *, struct proc_dir_entry *);
++void        nv_boot_vbios_free          (nv_linux_state_t *);
+ int         nv_procfs_add_gpu           (nv_linux_state_t *);
+ void        nv_procfs_remove_gpu        (nv_linux_state_t *);
+ 
+diff --git a/kernel-open/common/inc/os-interface.h b/kernel-open/common/inc/os-interface.h
+--- a/kernel-open/common/inc/os-interface.h
++++ b/kernel-open/common/inc/os-interface.h
+@@ -74,6 +74,8 @@
+  *
+  * ---------------------------------------------------------------------------
+  */
++
++void NV_API_CALL os_capture_boot_vbios(void *, NvU32, const void *, NvU32, NvU32);
+ 
+ NV_STATUS   NV_API_CALL  os_alloc_mem                     (void **, NvU64);
+ void        NV_API_CALL  os_free_mem                      (void *);
+diff --git a/src/nvidia/arch/nvalloc/unix/include/os-interface.h b/src/nvidia/arch/nvalloc/unix/include/os-interface.h
+--- a/src/nvidia/arch/nvalloc/unix/include/os-interface.h
++++ b/src/nvidia/arch/nvalloc/unix/include/os-interface.h
+@@ -74,6 +74,8 @@
+  *
+  * ---------------------------------------------------------------------------
+  */
++
++void NV_API_CALL os_capture_boot_vbios(void *, NvU32, const void *, NvU32, NvU32);
+ 
+ NV_STATUS   NV_API_CALL  os_alloc_mem                     (void **, NvU64);
+ void        NV_API_CALL  os_free_mem                      (void *);
+diff --git a/kernel-open/nvidia/nv-boot-vbios.c b/kernel-open/nvidia/nv-boot-vbios.c
+--- /dev/null
++++ b/kernel-open/nvidia/nv-boot-vbios.c
+@@ -0,0 +1,149 @@
++// SPDX-License-Identifier: MIT
++/* Copyright (c) 2026 Nicholas DeTello */
++/* Local diagnostic: retain an existing boot ROM read, with no extra GPU access. */
++#include "os-interface.h"
++#include "nv-linux.h"
++#include "nv-procfs.h"
++#define NV_BOOT_VBIOS_MAX_SIZE (1024U * 1024U)
++#define NV_BOOT_VBIOS_HEADER_SIZE 64U
++#define NV_BOOT_VBIOS_NOT_REACHED 0U
++#define NV_BOOT_VBIOS_CAPTURED 1U
++#define NV_BOOT_VBIOS_EXTRACT_FAILED 2U
++#define NV_BOOT_VBIOS_INVALID_IMAGE 3U
++#define NV_BOOT_VBIOS_NO_MEMORY 4U
++static DEFINE_MUTEX(nv_boot_vbios_lock);
++void NV_API_CALL os_capture_boot_vbios(void *gpu, NvU32 rm_status,
++    const void *image, NvU32 size, NvU32 expansion_offset)
++{
++    nv_state_t *nv = gpu;
++    nv_linux_state_t *nvl;
++    if (gpu == NULL || !IS_ENABLED(CONFIG_PROC_FS))
++        return;
++    nvl = NV_GET_NVL_FROM_NV_STATE(nv);
++    mutex_lock(&nv_boot_vbios_lock);
++    /* Freeze even failed attempts: a later retry must not hide the first result. */
++    if (nvl->boot_vbios_state != NV_BOOT_VBIOS_NOT_REACHED)
++        goto out;
++    nvl->boot_vbios_rm_status = rm_status;
++    if (rm_status != NV_OK)
++    {
++        nvl->boot_vbios_state = NV_BOOT_VBIOS_EXTRACT_FAILED;
++        goto out;
++    }
++    if (image == NULL || size == 0 || size > NV_BOOT_VBIOS_MAX_SIZE ||
++        expansion_offset > size)
++    {
++        nvl->boot_vbios_state = NV_BOOT_VBIOS_INVALID_IMAGE;
++        goto out;
++    }
++    nvl->boot_vbios_data = kvmalloc(size, GFP_KERNEL);
++    if (nvl->boot_vbios_data == NULL)
++    {
++        nvl->boot_vbios_state = NV_BOOT_VBIOS_NO_MEMORY;
++        goto out;
++    }
++    memcpy(nvl->boot_vbios_data, image, size);
++    nvl->boot_vbios_size = size;
++    nvl->boot_vbios_expansion_offset = expansion_offset;
++    nvl->boot_vbios_state = NV_BOOT_VBIOS_CAPTURED;
++out:
++    mutex_unlock(&nv_boot_vbios_lock);
++}
++/* Called at final Linux-state lock destruction, including failed PCI probe. */
++void nv_boot_vbios_free(nv_linux_state_t *nvl)
++{
++    mutex_lock(&nv_boot_vbios_lock);
++    kvfree(nvl->boot_vbios_data);
++    nvl->boot_vbios_data = NULL;
++    nvl->boot_vbios_size = 0;
++    nvl->boot_vbios_expansion_offset = 0;
++    nvl->boot_vbios_rm_status = 0;
++    nvl->boot_vbios_state = NV_BOOT_VBIOS_NOT_REACHED;
++    mutex_unlock(&nv_boot_vbios_lock);
++}
++#if defined(CONFIG_PROC_FS)
++struct nv_boot_vbios_snapshot
++{
++    size_t size;
++    unsigned char bytes[];
++};
++static void nv_boot_vbios_put32(unsigned char *p, NvU32 value)
++{
++    p[0] = value;
++    p[1] = value >> 8;
++    p[2] = value >> 16;
++    p[3] = value >> 24;
++}
++static int nv_boot_vbios_open(struct inode *inode, struct file *file)
++{
++    nv_linux_state_t *nvl = NV_PDE_DATA(inode);
++    nv_state_t *nv = NV_STATE_PTR(nvl);
++    struct nv_boot_vbios_snapshot *snapshot;
++    unsigned char *header;
++    size_t size;
++    if (!capable(CAP_SYS_ADMIN) || (file->f_mode & FMODE_WRITE))
++        return -EPERM;
++    /* No nv_open_device, RM call, PM lock, runtime resume or hardware read here.
++     * proc_remove drains this callback before nvl can be freed. Each successful
++     * open owns its snapshot; later reads/release never dereference nvl.
++     */
++    mutex_lock(&nv_boot_vbios_lock);
++    size = NV_BOOT_VBIOS_HEADER_SIZE + nvl->boot_vbios_size;
++    snapshot = kvzalloc(sizeof(*snapshot) + size, GFP_KERNEL);
++    if (snapshot == NULL)
++    {
++        mutex_unlock(&nv_boot_vbios_lock);
++        return -ENOMEM;
++    }
++    snapshot->size = size;
++    header = snapshot->bytes;
++    memcpy(header, "NVBROM1", 8);
++    nv_boot_vbios_put32(header + 8, 1); /* format version */
++    nv_boot_vbios_put32(header + 12, NV_BOOT_VBIOS_HEADER_SIZE);
++    nv_boot_vbios_put32(header + 16, nvl->boot_vbios_state);
++    nv_boot_vbios_put32(header + 20, nvl->boot_vbios_rm_status);
++    nv_boot_vbios_put32(header + 24, nvl->boot_vbios_size);
++    nv_boot_vbios_put32(header + 28, nvl->boot_vbios_expansion_offset);
++    nv_boot_vbios_put32(header + 32, nv->pci_info.domain);
++    nv_boot_vbios_put32(header + 36, nv->pci_info.bus);
++    nv_boot_vbios_put32(header + 40, nv->pci_info.slot);
++    nv_boot_vbios_put32(header + 44, nv->pci_info.function);
++    nv_boot_vbios_put32(header + 48, nv->pci_info.vendor_id);
++    nv_boot_vbios_put32(header + 52, nv->pci_info.device_id);
++    /* Bytes56..63 reserved, zero. Failure/not-reached snapshots have no payload. */
++    if (nvl->boot_vbios_size != 0)
++        memcpy(header + NV_BOOT_VBIOS_HEADER_SIZE,
++               nvl->boot_vbios_data, nvl->boot_vbios_size);
++    mutex_unlock(&nv_boot_vbios_lock);
++    file->private_data = snapshot;
++    return 0;
++}
++static ssize_t nv_boot_vbios_read(struct file *file, char __user *buffer,
++    size_t count, loff_t *position)
++{
++    struct nv_boot_vbios_snapshot *snapshot = file->private_data;
++    return simple_read_from_buffer(buffer, count, position,
++                                   snapshot->bytes, snapshot->size);
++}
++static int nv_boot_vbios_release(struct inode *inode, struct file *file)
++{
++    kvfree(file->private_data);
++    file->private_data = NULL;
++    return 0;
++}
++static const nv_proc_ops_t nv_boot_vbios_ops = {
++    NV_PROC_OPS_SET_OWNER()
++    .NV_PROC_OPS_OPEN = nv_boot_vbios_open,
++    .NV_PROC_OPS_READ = nv_boot_vbios_read,
++    .NV_PROC_OPS_LSEEK = default_llseek,
++    .NV_PROC_OPS_RELEASE = nv_boot_vbios_release,
++};
++#endif
++void nv_boot_vbios_add_proc(nv_linux_state_t *nvl, struct proc_dir_entry *parent)
++{
++#if defined(CONFIG_PROC_FS)
++    if (proc_create_data("boot_vbios", S_IFREG | 0400, parent,
++                         &nv_boot_vbios_ops, nvl) == NULL)
++        nv_printf(NV_DBG_ERRORS, "NVRM: boot VBIOS diagnostic export unavailable\n");
++#endif
++}
+diff --git a/kernel-open/nvidia/nv-procfs.c b/kernel-open/nvidia/nv-procfs.c
+--- a/kernel-open/nvidia/nv-procfs.c
++++ b/kernel-open/nvidia/nv-procfs.c
+@@ -1498,6 +1498,7 @@
+     }
+ 
+     nvl->proc_dir = proc_nvidia_gpu;
++    nv_boot_vbios_add_proc(nvl, proc_nvidia_gpu);
+ #endif
+     return 0;
+ #if defined(CONFIG_PROC_FS)
+diff --git a/kernel-open/nvidia/nv.c b/kernel-open/nvidia/nv.c
+--- a/kernel-open/nvidia/nv.c
++++ b/kernel-open/nvidia/nv.c
+@@ -4207,6 +4207,7 @@
+     nv_state_t *nv
+ )
+ {
++    nv_boot_vbios_free(NV_GET_NVL_FROM_NV_STATE(nv));
+     rm_destroy_event_locks(sp, nv);
+ }
+ 
+diff --git a/kernel-open/nvidia/nvidia-sources.Kbuild b/kernel-open/nvidia/nvidia-sources.Kbuild
+--- a/kernel-open/nvidia/nvidia-sources.Kbuild
++++ b/kernel-open/nvidia/nvidia-sources.Kbuild
+@@ -20,6 +20,7 @@
+ NVIDIA_SOURCES += nvidia/nv-mmap.c
+ NVIDIA_SOURCES += nvidia/nv-p2p.c
+ NVIDIA_SOURCES += nvidia/nv-procfs.c
++NVIDIA_SOURCES += nvidia/nv-boot-vbios.c
+ NVIDIA_SOURCES += nvidia/nv-usermap.c
+ NVIDIA_SOURCES += nvidia/nv-vm.c
+ NVIDIA_SOURCES += nvidia/nv-vtophys.c
+diff --git a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -64,6 +64,9 @@
+ #include "gpu/rpc/objrpc.h"
+ #include "gpu/timer/objtmr.h"
+ #include "os/os.h"
++#if defined(NV_LINUX)
++#include "os-interface.h"
++#endif
+ #include "gpu/disp/dispsw.h"
+ #include "kernel/gpu/timed_sema.h"
+ #include "vgpu/rpc.h"
+@@ -5563,6 +5566,12 @@
+ 
+         // Try and extract a VBIOS image.
+         status = kgspExtractVbiosFromRom_HAL(pGpu, pKernelGsp, &pVbiosImg);
++#if defined(NV_LINUX)
++        os_capture_boot_vbios(pGpu->pOsGpuInfo, status,
++            (status == NV_OK && pVbiosImg != NULL) ? pVbiosImg->pImage : NULL,
++            (status == NV_OK && pVbiosImg != NULL) ? pVbiosImg->biosSize : 0,
++            (status == NV_OK && pVbiosImg != NULL) ? pVbiosImg->expansionRomOffset : 0);
++#endif
+ 
+         if (status == NV_OK)
+         {
