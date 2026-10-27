@@ -7,8 +7,10 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.environ["EDITOR_TESTS"])
-from test_rom_formats import synthetic_rom
+EDITOR_TESTS = os.environ.get("EDITOR_TESTS")
+if EDITOR_TESTS:
+    sys.path.insert(0, EDITOR_TESTS)
+    from test_rom_formats import synthetic_rom
 
 BUILDER = Path(__file__).resolve().parents[1] / "src/make-image.py"
 # Optional: a saved ROM of the validated board; the payload hash below is the booted image.
@@ -17,6 +19,7 @@ CHANGES = dict(power_max_w=140, power_default_w=80,
                nvvdd_output_ocp_max_ma=120000, nvvdd_output_ocp_rated_ma=99000)
 
 
+@unittest.skipUnless(EDITOR_TESTS, "EDITOR_TESTS is not set; use nix flake check for editor integration tests")
 class EditTests(unittest.TestCase):
     def build(self, blob):
         with tempfile.TemporaryDirectory() as directory:

@@ -2,11 +2,14 @@
 
 ## NixOS
 
-Prerequisites: `hardware.nvidia.open = true`, `hardware.nvidia.dynamicBoost.enable = true`,
-`services.xserver.videoDrivers = [ "nvidia" ]`, `nixpkgs.config.allowUnfree = true`, and a
+Prerequisites: `services.xserver.videoDrivers = [ "nvidia" ]`, `nixpkgs.config.allowUnfree = true`, and a
 `boot.kernelPackages` whose `nvidiaPackages.latest` is exactly 615.71.09. nixpkgs
 `58a20b0a882fffd508ca4dad73836d76632792a3` provides that with Linux 7.2.7. Do not set
 `hardware.nvidia.package`; the module sets it to the patched open driver. x86_64-linux only.
+It defaults `hardware.nvidia.open` to true and rejects an explicit false value.
+
+On Dynamic Boost laptops, also enable `hardware.nvidia.dynamicBoost.enable`. Other
+machines use a direct limit request for the boot target; desktop cards are unverified.
 
 Two rebuilds: the first exports your ROM, the second applies the edited image.
 
@@ -83,33 +86,34 @@ laptops), `nvflash --save` on Linux, or GPU-Z on Windows. Validate it with `nvbi
 as above. The export was hardware-validated on 2026-10-26
 ([record](evidence/2026-10-26-boot-vbios-export.json)).
 
-## Fedora 43
+## Fedora 43 and Ubuntu 24.04 LTS
 
-Same two rounds as NixOS, driven by a JSON config with the same fields. Tested in a Fedora 43
-VM with the GPU passed through, kernel 7.2.11, driver 615.71.09
-([record](evidence/2026-10-26-fedora43-vm.json)); the powerd target acts only on a real
-laptop, since a VM exposes no Dynamic Boost firmware.
+Debian-family derivatives use the Ubuntu path unchanged; only the package manager,
+headers package and initramfs tool differ between the two families, and both are handled.
 
-The patches change NVIDIA's resource manager, which the `.run` kernel-module build and akmods
-ship as a prebuilt object. The installer therefore builds the full
+Use x86_64, driver 615.71.09, Secure Boot off, no packaged NVIDIA driver, and a text
+console with the graphical session stopped. Install headers for the target kernel first:
+`sudo dnf install kernel-devel-$(uname -r)` on Fedora, or
+`sudo apt-get install linux-headers-$(uname -r)` on Ubuntu. Keep a way back to the
+previous working driver. The installer refuses unsupported releases, missing headers,
+packaged NVIDIA drivers and enabled Secure Boot; it never removes packaged drivers.
+If the repositories no longer carry headers for the running kernel, install the current
+kernel and matching headers, reboot into it, then run the installer.
+
+The patches change NVIDIA's resource manager, which the `.run` kernel-module build and
+akmods ship as a prebuilt object. `install/linux.sh` builds the full
 [open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules/tree/615.71.09)
-source for the running kernel, installs matching userspace from the `.run` with
-`--no-kernel-modules`, and uses the editor as a Python package pinned to `edf0f483`.
-
-Requirements: Fedora 43 x86_64, development files for the running kernel, Secure Boot off (the
-installer does not sign modules), no packaged NVIDIA driver installed, a text console with the
-graphical session stopped, and a way back to your previous driver. The module is built for the
-running kernel only; rerun the installer after a kernel update.
+source, installs matching userspace with `--no-kernel-modules`, and uses the editor
+pinned to `edf0f483`. It blacklists Nouveau and regenerates the initramfs. Reboot is
+required before the patched module can load.
 
 ```sh
-cp install/fedora.json fedora.json       # "vbios": null for the first round
-sudo bash install/fedora.sh fedora.json && sudo reboot
+cp install/example.json gpu-power.json    # "vbios": null for bootstrap
+sudo bash install/linux.sh gpu-power.json && sudo reboot
 sudo gpu-power rom /var/lib/gpu.rom
 ```
 
-Then set `vbios` and your limits (relative paths are relative to the config file; `device`
-null picks the only NVIDIA GPU, set it on multi-GPU systems), rerun the installer, reboot, and
-verify as for NixOS:
+Set the ROM and limits, then rerun the installer and reboot:
 
 ```json
 {
@@ -123,13 +127,77 @@ verify as for NixOS:
 }
 ```
 
-Installed files: the payload under `/lib/firmware/nvidia/615.71.09/vbios-override/`, with a
-dracut include in `/etc/dracut.conf.d/` and the modprobe options in `/etc/modprobe.d/`, both
-named `gpu-power-policy.conf`; the CLI in `/usr/local/bin`, its modules and the shim in
-`/usr/local/lib/gpu-power`; `/etc/gpu-power-policy.json`; the powerd drop-in and the
-`gpu-power-policy-init` unit under `/etc/systemd/system/`; NVIDIA's D-Bus policy in
-`/etc/dbus-1/system.d/`.
+Relative ROM paths are relative to the config file. A null device selects the only NVIDIA
+GPU; set its PCI address on multi-GPU systems. These limits belong to the tested laptop;
+read your own ROM's stock values. Verify image selection with `sudo gpu-power status` and
+limits with `nvidia-smi -q -d POWER`. Without powerd, `target` reports that the daemon is
+not running and leaves a numeric target unchanged; use `gpu-power limit` instead.
 
-Rollback: set `vbios` and `powerdTargetWatts` to null, rerun, reboot; that removes the
-override and the units and keeps the ROM export. To remove the patched driver, reinstall the
-stock one, `depmod -a`, `dracut --force`, reboot.
+Installed files: the payload under `/lib/firmware/nvidia/615.71.09/vbios-override/`,
+`/etc/modprobe.d/gpu-power-policy.conf`, `/etc/modprobe.d/gpu-power-policy-nouveau.conf`,
+`/usr/local/bin/gpu-power`, `/usr/local/lib/gpu-power/`, `/etc/gpu-power-policy.json`, and
+`/etc/gpu-power-policy-install.json` (the saved config for `--kernel`). Fedora includes the
+payload through `/etc/dracut.conf.d/gpu-power-policy.conf`; Ubuntu uses
+`/etc/initramfs-tools/hooks/gpu-power-policy`. The init unit is always installed under
+`/etc/systemd/system/`; the powerd drop-in is installed only when its binary and unit exist.
+Every overwritten file under `/etc` gets a numbered backup (`.~1~`, `.~2~`, etc.).
+Both `vbios: null` and `--remove` disable and stop powerd, remove its project drop-in and
+D-Bus policy, delete the override payload, module options and initramfs hook, and refresh
+all installed initramfs images. Bootstrap retains the CLI, init unit, stock config and
+Nouveau blacklist for ROM export. Removal also deletes those files; the installed driver
+and numbered backups remain.
+
+## Tested configurations
+
+| Target | What was verified |
+|---|---|
+| NixOS, Acer PT516-52s, RTX 3080 Ti Laptop, 615.71.09, Linux 7.2.7 | Everything, natively: image staging, ROM export, powerd target, current control, the five-run load comparison |
+| Fedora 43 VM, GPU passthrough, kernel 7.2.12 (fresh), 7.2.11 (existing-disk regression) | Install, repeat install, ROM export, image staging, current control, limit request at boot and at runtime, removal; headless FurMark results below |
+| Ubuntu 24.04 VM, GPU passthrough, kernel 6.8.0-147-generic | Same as Fedora; kernel update untested because the image already has the newest available GA kernel |
+
+The powerd target needs the laptop's Dynamic Boost firmware and is verified natively
+only. Machines without it, including VMs, get the boot target through `gpu-power limit`.
+Desktop cards: the image edit, ROM export, `current` and `limit` apply; none of it has
+been run on a desktop card.
+
+Headless FurMark 2.10.2 Vulkan at 2560×1440, a 30 s warm-up then one 30 s run per phase.
+All phases used the edited 140 W image ceiling; stock/restored means runtime 80 W / 99 A.
+Power is the mean of 1 Hz samples during each benchmark; peak temperature was 67 °C.
+These short VM runs do not establish sustained performance or physical HDMI output.
+
+| Phase | Fedora: mean power / score | Ubuntu: mean power / score |
+|---|---:|---:|
+| Stock limit, 99 A | 79.88 W / 1308 | 79.86 W / 1337 |
+| Limit 125 W, 99 A | 114.38 W / 2241 | 114.24 W / 2243 |
+| Limit 125 W, 107 A | 123.35 W / 2265 | 123.33 W / 2254 |
+| `off`, restored 80 W / 99 A | 79.89 W / 1279 | 79.89 W / 1280 |
+
+[Ubuntu evidence](evidence/2026-10-27-ubuntu24-vm.json) and
+[Fedora evidence](evidence/2026-10-27-fedora43-vm.json) include the no-Dynamic-Boost
+smoke tests. `nvidia-smi -pl 125` prints "not supported" but exits zero on this GPU;
+the CLI uses NVML's actual status and falls back to role 8. Both guests enforced
+125 W after two boots, and `limit off` restored 80 W.
+
+## What off restores, and how to go back further
+
+`off` restores the rated current, removes the powerd target override and sends the
+stock limit. The edited image stays until reboot. To boot stock: set `vbios` to null
+(NixOS: `enable = false`), rebuild or reinstall, reboot. To remove the project on Fedora
+or Ubuntu: `sudo bash install/linux.sh --remove`, reinstall a stock driver, reboot.
+Removal deletes the project's Nouveau blacklist; without the stock-driver reinstall,
+Nouveau can bind the GPU on the next boot and NVIDIA tools will be unavailable.
+
+## Updates
+
+Kernel update: run `install/linux.sh --kernel <new version>` after the kernel and its
+headers are installed and before rebooting into it; the previous kernel keeps working.
+NixOS rebuilds the module with the system. Driver update: unsupported until a new pinned
+version is verified; keep 615.71.09.
+
+---
+
+The install path, image staging, ROM export, current control and limit request were verified
+on Fedora 43 and Ubuntu 24.04 with this laptop's GPU passed through to a VM: 79.9 W and 1308
+points at stock against 123.4 W and 2265 with both limits raised. A VM exposes no Dynamic
+Boost firmware, so the `nvidia-powerd` path is verified on the laptop only; everywhere else
+the boot target falls back to a direct limit request.

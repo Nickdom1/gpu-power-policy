@@ -15,7 +15,7 @@ let
   name = "615.71.09/vbios-override/${cfg.device}.bin";
   image = parts.policyImage {
     rom = cfg.vbios;
-    inherit name;
+    inherit name runtime;
     inherit (cfg)
       powerCeilingWatts
       powerDefaultWatts
@@ -23,7 +23,26 @@ let
       currentRatedMilliamps
       ;
   };
-  imageInfo = builtins.fromJSON (builtins.readFile "${image}/payload.json");
+  modprobeFile = pkgs.runCommand "gpu-power-policy-modprobe.conf" { } ''
+    ln -s ${image}/modprobe.conf "$out"
+  '';
+  runtime = {
+    inherit (cfg) device;
+    modinfo = "${pkgs.kmod}/bin/modinfo";
+    systemctl = "${pkgs.systemd}/bin/systemctl";
+    journalctl = "${pkgs.systemd}/bin/journalctl";
+    dmesg = "${pkgs.util-linux}/bin/dmesg";
+    nvidiaSmi = "${driver.bin}/bin/nvidia-smi";
+  }
+  // lib.optionalAttrs configured {
+    inherit (cfg)
+      powerCeilingWatts
+      powerDefaultWatts
+      currentCeilingMilliamps
+      currentRatedMilliamps
+      powerdTargetWatts
+      ;
+  };
   positive =
     description:
     lib.mkOption {
@@ -58,7 +77,7 @@ in
     powerdTargetWatts = lib.mkOption {
       type = lib.types.nullOr (lib.types.ints.between 1 4294967);
       default = null;
-      description = "Initial powerd target override in watts; null leaves stock powerd targets. Runtime changes last until reboot.";
+      description = "Initial power target in watts, via Dynamic Boost when available or a direct limit request; null keeps stock behavior.";
     };
   };
 
@@ -69,8 +88,8 @@ in
         message = "gpuPowerPolicy requires NVIDIA 615.71.09 from the selected kernel package set.";
       }
       {
-        assertion = config.hardware.nvidia.open && config.hardware.nvidia.dynamicBoost.enable;
-        message = "gpuPowerPolicy requires hardware.nvidia.open and dynamicBoost.enable.";
+        assertion = config.hardware.nvidia.open == true;
+        message = "gpuPowerPolicy requires hardware.nvidia.open.";
       }
       {
         assertion =
@@ -95,38 +114,34 @@ in
       }
     ];
     hardware = {
-      nvidia.package = driver // {
-        open = parts.patchedOpen driver;
+      nvidia = {
+        # The pinned upstream module also treats its nullable default as a Boolean.
+        open = lib.mkDefault true;
+        package = driver // {
+          open = parts.patchedOpen driver;
+        };
       };
       firmware = lib.optionals configured [ image ];
-      nvidia.moduleParams.nvidia = lib.optionalAttrs configured {
-        NVreg_RegistryDwordsPerDevice = ''"pci=${cfg.device};RmLinuxVbiosOverride=2;RmLinuxVbiosOverrideSize=${toString imageInfo.output_size}"'';
-        NVreg_RegistryBinaryFilePerDevice = ''"pci=${cfg.device};RmLinuxVbiosOverrideImage=${name}"'';
+    };
+    environment = {
+      systemPackages = [ parts.gpu-power ];
+      etc."gpu-power-policy.json".source =
+        if configured then
+          "${image}/runtime.json"
+        else
+          pkgs.writeText "gpu-power-policy.json" (builtins.toJSON runtime);
+      etc."modprobe.d/gpu-power-policy.conf" = lib.mkIf configured {
+        source = modprobeFile;
       };
     };
-    environment.systemPackages = [ parts.gpu-power ];
-    environment.etc."gpu-power-policy.json".text = builtins.toJSON (
-      {
-        inherit (cfg) device;
-        modinfo = "${pkgs.kmod}/bin/modinfo";
-        systemctl = "${pkgs.systemd}/bin/systemctl";
-        journalctl = "${pkgs.systemd}/bin/journalctl";
-        dmesg = "${pkgs.util-linux}/bin/dmesg";
-        nvidiaSmi = "${driver.bin}/bin/nvidia-smi";
-      }
-      // lib.optionalAttrs configured {
-        inherit (cfg)
-          powerCeilingWatts
-          powerDefaultWatts
-          currentCeilingMilliamps
-          currentRatedMilliamps
-          ;
-        inherit (imageInfo) output_sha256 output_size;
-      }
-    );
-    systemd = lib.mkIf configured {
+    # Both initrd implementations must receive the generated options before NVIDIA loads.
+    boot.initrd = lib.mkIf configured {
+      extraFiles."etc/modprobe.d/gpu-power-policy.conf".source = modprobeFile;
+      systemd.contents."/etc/modprobe.d/gpu-power-policy.conf".source = modprobeFile;
+    };
+    systemd = {
       tmpfiles.rules = [ "d /run/gpu-power-policy 0755 root root -" ];
-      services.nvidia-powerd = {
+      services.nvidia-powerd = lib.mkIf (configured && config.hardware.nvidia.dynamicBoost.enable) {
         environment = {
           LD_PRELOAD = "${parts.powerd-shim}/lib/libpowerd-shim.so";
           GPU_POWER_DEVICE = cfg.device;
@@ -136,22 +151,22 @@ in
         after = [ "gpu-power-policy-init.service" ];
       };
       services.gpu-power-policy-init = {
-        description = "Initialize the boot powerd target override";
-        before = [ "nvidia-powerd.service" ];
-        after = [ "systemd-tmpfiles-setup.service" ];
+        description = "Initialize the selected GPU image's boot power target";
+        wantedBy = [ "multi-user.target" ];
+        before = lib.optional config.hardware.nvidia.dynamicBoost.enable "nvidia-powerd.service";
+        after = [
+          "systemd-tmpfiles-setup.service"
+          "systemd-modules-load.service"
+        ];
         # Runtime on/off must survive powerd restarts and rebuilds within this boot.
         restartIfChanged = false;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
         };
-        script =
-          lib.optionalString (cfg.powerdTargetWatts != null) ''
-            echo ${toString (cfg.powerdTargetWatts * 1000)} > /run/gpu-power-policy/target-mw
-          ''
-          + lib.optionalString (cfg.powerdTargetWatts == null) ''
-            rm -f /run/gpu-power-policy/target-mw
-          '';
+        script = ''
+          exec ${parts.gpu-power}/bin/gpu-power boot-init
+        '';
       };
     };
   };

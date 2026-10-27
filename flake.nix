@@ -37,6 +37,25 @@
 
       # CPU-only checks. The driver build is `nix build .#kernel-module` (unfree, minutes).
       checks.${system} = {
+        module-eval = import ./tests/module-eval.nix {
+          inherit nixpkgs pkgs;
+          module = self.nixosModules.default;
+        };
+        installer-tests =
+          pkgs.runCommand "gpu-power-installer-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.python3
+                pkgs.bash
+                pkgs.coreutils
+              ];
+              src = ./.;
+            }
+            ''
+              export PYTHONDONTWRITEBYTECODE=1
+              python3 $src/tests/test_install.py
+              touch $out
+            '';
         inherit (self.packages.${system})
           powerd-shim
           gpu-power

@@ -19,7 +19,10 @@ REPRESENTATION = {"ampere": "ampere-relocated-v1", "ada": "ada-relocated-v2", "t
 
 
 def nvbios(*args):
-    result = subprocess.run(["nvbios", *args], capture_output=True, text=True)
+    try:
+        result = subprocess.run(["nvbios", *args], capture_output=True, text=True)
+    except FileNotFoundError:
+        sys.exit("nvbios command not found; install the pinned nvidia-vbios-vix-editor first")
     try:
         report = json.loads(result.stdout)
     except ValueError:
@@ -30,15 +33,19 @@ def nvbios(*args):
 
 
 def main(rom, changes_path, edited, payload):
-    changes = json.load(open(changes_path))
+    with open(changes_path) as source:
+        changes = json.load(source)
     family = nvbios("inspect", rom)["architecture"]["family"]
     if family not in REPRESENTATION:
         sys.exit(f"unsupported VBIOS family {family!r}; only Turing, Ampere and Ada are handled")
     report = nvbios("edit", rom, edited, "--changes", changes_path)
     applied = {f["field"]: f["after"] for f in report["affected_fields"]}
+    after_fields = {f["key"]: f["current"] for f in report["after"]["fields"]}
     for key, value in changes.items():
         # A requested value equal to the stored one is not listed as affected.
-        after = applied.get(key, next(f["current"] for f in report["after"]["fields"] if f["key"] == key))
+        if key not in applied and key not in after_fields:
+            sys.exit(f"nvbios edit returned no value for requested field {key!r}")
+        after = applied[key] if key in applied else after_fields[key]
         if after != value:
             sys.exit(f"field {key} is {after!r} after the edit, expected {value!r}")
     args = ["normalize", edited, payload]

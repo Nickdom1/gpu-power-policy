@@ -1,0 +1,17 @@
+name: CPU tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -v
+      - name: Build and test the powerd shim
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared -pthread -o /tmp/libpowerd-shim.so src/powerd-shim.c -ldl
+          cc -std=c11 -Wall -Wextra -Werror -O1 -pthread -o /tmp/shim-test tests/test_shim.c -ldl
+          /tmp/shim-test

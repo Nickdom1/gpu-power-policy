@@ -24,6 +24,34 @@ def buffers(index=7):
 
 
 class TransportTests(unittest.TestCase):
+    def test_close_failures_release_both_fds_once_and_check_free_status(self):
+        client = rm.RM.__new__(rm.RM)
+        client.fd, client.gpu_fd, client.root = 11, 12, 42
+        def free(_fd, _request, raw, _mutate):
+            struct.pack_into("<I", raw, 12, 0x56)
+        with patch.object(rm.fcntl, "ioctl", side_effect=free) as ioctl:
+            with patch.object(rm.os, "close", side_effect=[OSError("GPU close"), None]) as close:
+                with self.assertRaisesRegex(RuntimeError, "free root.*00000056"):
+                    client.close()
+                self.assertEqual(close.call_args_list, [call(12), call(11)])
+                self.assertEqual((client.fd, client.gpu_fd, client.root), (None, None, 0))
+                client.close()
+                self.assertEqual(ioctl.call_count, 1)
+                self.assertEqual(close.call_count, 2)
+
+    def test_rollback_and_context_cleanup_preserve_original_failure(self):
+        with patch.object(rm.os, "open", return_value=11):
+            with patch.object(rm.RM, "ioctl", side_effect=RuntimeError("original initialization")):
+                with patch.object(rm.RM, "close", side_effect=OSError("cleanup")):
+                    with self.assertRaisesRegex(RuntimeError, "original initialization") as caught:
+                        rm.RM("0000:01:00.0")
+                    self.assertIn("cleanup", caught.exception.__notes__[0])
+        client = rm.RM.__new__(rm.RM)
+        with patch.object(client, "close", side_effect=OSError("cleanup")):
+            with self.assertRaisesRegex(ValueError, "original body"):
+                with client:
+                    raise ValueError("original body")
+
     def test_layouts(self):
         self.assertEqual(rm.NVOS21.size, 32)
         self.assertEqual(rm.NVOS54.size, 32)
@@ -119,13 +147,11 @@ class PolicyTests(unittest.TestCase):
                     assert raw == expected
                     control[:] = raw
                 return 0, bytes(control)
-        with patch.object(policy, "CURRENT_LAYOUT_VERIFIED", False):
-            with self.assertRaisesRegex(ValueError, "SET disabled"):
-                policy.set_current(Fake(), info, 99000, 120000, 107000)
-        with patch.object(policy, "CURRENT_LAYOUT_VERIFIED", True):
-            self.assertEqual(policy.set_current(Fake(), info, 99000, 120000, 107000), 107000)
-            with self.assertRaisesRegex(ValueError, "within"):
-                policy.set_current(Fake(), info, 99000, 120000, 120001)
+        with self.assertRaisesRegex(ValueError, "reply size"):
+            policy.set_current(Fake(), info[:-1], 99000, 120000, 107000)
+        self.assertEqual(policy.set_current(Fake(), info, 99000, 120000, 107000), 107000)
+        with self.assertRaisesRegex(ValueError, "within"):
+            policy.set_current(Fake(), info, 99000, 120000, 120001)
 
     def test_ambiguous_policy_and_readback_refuse(self):
         info, control = buffers()
@@ -138,12 +164,11 @@ class PolicyTests(unittest.TestCase):
         class Unchanged:
             def control(self, command, raw):
                 return 0, bytes(control)
-        with patch.object(policy, "CURRENT_LAYOUT_VERIFIED", True):
-            with self.assertRaisesRegex(RuntimeError, "readback"):
-                policy.set_current(Unchanged(), info, 99000, 120000, 107000)
-            control[:16] = bytes(16)
-            with self.assertRaisesRegex(ValueError, "header"):
-                policy.set_current(Unchanged(), info, 99000, 120000, 107000)
+        with self.assertRaisesRegex(RuntimeError, "readback"):
+            policy.set_current(Unchanged(), info, 99000, 120000, 107000)
+        control[:16] = bytes(16)
+        with self.assertRaisesRegex(ValueError, "header"):
+            policy.set_current(Unchanged(), info, 99000, 120000, 107000)
 
 
 class LiveFixtureTests(unittest.TestCase):
@@ -155,7 +180,6 @@ class LiveFixtureTests(unittest.TestCase):
         full = (self.fixtures / "a61a.bin").read_bytes()
         single = (self.fixtures / "a61a-current.bin").read_bytes()
         status = (self.fixtures / "a619.bin").read_bytes()
-        self.assertTrue(policy.CURRENT_LAYOUT_VERIFIED)
         self.assertEqual(policy.u32(info, 4), 0x7F21F)
         self.assertEqual(policy.table(policy.INFO, info)[2]["words"][:3], [1000, 80000, 140000])
         for raw in (full, single):

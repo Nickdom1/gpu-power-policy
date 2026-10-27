@@ -30,8 +30,8 @@ rec {
     src = ../src;
     dontConfigure = true;
     buildPhase = ''
-      $CC -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared -o libpowerd-shim.so powerd-shim.c -ldl
-      $CC -std=c11 -Wall -Wextra -Werror -O1 -DSHIM_TEST -o shim-test powerd-shim.c
+      $CC -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared -pthread -o libpowerd-shim.so powerd-shim.c -ldl
+      $CC -std=c11 -Wall -Wextra -Werror -O1 -pthread -DSHIM_SOURCE="\"$PWD/powerd-shim.c\"" -o shim-test ${../tests/test_shim.c} -ldl
     '';
     doCheck = true;
     checkPhase = "./shim-test";
@@ -56,6 +56,7 @@ rec {
       export PYTHONDONTWRITEBYTECODE=1
       ${python.interpreter} tests/test_rm.py
       ${python.interpreter} tests/test_cli.py
+      ${python.interpreter} tests/test_make_image.py
     '';
     installPhase = ''
       mkdir -p $out/bin $out/lib/gpu-power
@@ -89,6 +90,7 @@ rec {
       powerDefaultWatts,
       currentCeilingMilliamps,
       currentRatedMilliamps,
+      runtime,
     }:
     pkgs.runCommand "gpu-power-vbios-${builtins.baseNameOf name}"
       {
@@ -98,13 +100,17 @@ rec {
         ];
         inherit rom;
         firmwareName = name;
+        runtimeJson = builtins.toJSON runtime;
         changes = builtins.toJSON {
           power_max_w = powerCeilingWatts;
           power_default_w = powerDefaultWatts;
           nvvdd_output_ocp_max_ma = currentCeilingMilliamps;
           nvvdd_output_ocp_rated_ma = currentRatedMilliamps;
         };
-        passAsFile = [ "changes" ];
+        passAsFile = [
+          "changes"
+          "runtimeJson"
+        ];
         compressFirmware = false;
       }
       ''
@@ -112,5 +118,6 @@ rec {
         install -Dm444 payload.bin "$out/lib/firmware/nvidia/$firmwareName"
         cp payload.bin.json "$out/payload.json"
         cp edited.rom.json "$out/edit.json"
+        ${python.interpreter} ${../src/image-config.py} "$runtimeJsonPath" payload.bin.json "$firmwareName" "$out"
       '';
 }

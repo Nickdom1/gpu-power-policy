@@ -1,10 +1,14 @@
 """615 policy buffers, checked against the live captures in tests/fixtures."""
+
 import struct
 
 INFO, GET, SET, STATUS = 0x2080A618, 0x2080A61A, 0x2080E61B, 0x2080A619
+SET_LIMIT = 0x2080E61E
 SIZES = {INFO: 0x5020, GET: 0x3634, SET: 0x3634, STATUS: 0x60EF8}
-# Verified by read-only 615.71.09 captures, including the single-policy request.
-CURRENT_LAYOUT_VERIFIED = True
+
+
+def limit_request(watts):
+    return struct.pack("<BBHII", 8, 0xFE, 0, watts * 1000, 0)
 
 
 def u32(raw, off):
@@ -36,14 +40,13 @@ def table(command, raw):
         if mask & (1 << index):
             off = 0xCC + index * 0x104 if command == INFO else 0x14 + index * 0xC4
             if command == INFO:
-                rows.append(dict(index=index, cls=raw[off + 4],
-                                 words=list(struct.unpack_from("<4I", raw, off + 8))))
+                rows.append(dict(index=index, cls=raw[off + 4], words=list(struct.unpack_from("<4I", raw, off + 8))))
             else:
                 rows.append(dict(index=index, cls=raw[off], limit=u32(raw, off + 4)))
     return rows
 
 
-def current_policy(info, control, rated, ceiling):
+def current_policy(info, control, rated, ceiling, *, restoring=False):
     candidates = [r for r in table(INFO, info) if r["cls"] == 15 and r["words"][1] == rated]
     if len(candidates) != 1:
         raise ValueError("current policy class/rated value is not unique")
@@ -53,14 +56,13 @@ def current_policy(info, control, rated, ceiling):
         raise ValueError("A618 current bounds are inconsistent")
     lower, upper = max(rated, low), min(ceiling, high)
     matches = [r for r in table(GET, control) if r["index"] == row["index"] and r["cls"] == 15]
-    if len(matches) != 1 or not lower <= matches[0]["limit"] <= upper:
+    live_lower = low if restoring else lower
+    if len(matches) != 1 or not live_lower <= matches[0]["limit"] <= upper:
         raise ValueError("A61A current policy does not match A618/image bounds")
     return row["index"], matches[0]["limit"], lower, upper
 
 
 def set_current(rm, info, rated, ceiling, value):
-    if not CURRENT_LAYOUT_VERIFIED:
-        raise ValueError("current SET disabled: capture gpu-power dump and verify the live 615 layout first")
     control = query(rm, GET, u32(info, 4))
     index, _, lower, upper = current_policy(info, control, rated, ceiling)
     if not lower <= value <= upper:

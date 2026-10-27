@@ -1,0 +1,90 @@
+{
+ "date": "2026-10-27",
+ "distribution": "Fedora Linux 43 (Cloud Edition)",
+ "image": "Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2",
+ "image_sha256": "846574c8a97cd2d8dc1f231062d73107cc85cbbbda56335e264a46e3a6c8ab2f",
+ "kernel": "7.2.12-100.fc43.x86_64",
+ "driver": "615.71.09",
+ "gpu": "RTX 3080 Ti Laptop (GA103M)",
+ "vm": "QEMU 10.2.4, q35/KVM/OVMF, 8 vCPUs, 8192 MiB, both GPU functions, real ROM romfile",
+ "rom_export": {
+  "bytes": 600576,
+  "sha256": "13051902cd7de8847189df50a4e9a2d84d5fded6215467895ca550198491adb1",
+  "mode": "0600"
+ },
+ "tests": {
+  "bootstrap": "PASS fresh image, no prior NVIDIA installation; install/linux.sh install/fedora.json; reboot; gpu-power rom; Nouveau blacklisted, patched module loaded",
+  "configured": "PASS install/linux.sh configured.json; reboot; modinfo version=615.71.09, vbios_override_per_gpu=1; image selected; max/default=140/80 W",
+  "current": "PASS gpu-power current 107000; status=107000; current off; status=99000 mA",
+  "off": "PASS all three steps; current=99000 mA, target absent, enforced=80 W",
+  "repeat": "PASS identical configuration, hooks and units after same-config reinstall",
+  "rollback": "PASS vbios=null reinstall/reboot; initializer skipped; stock max/default/enforced=115/80/80 W; writes refused",
+  "remove": "PASS install/linux.sh --remove; reboot; project files absent; Nouveau bound to GPU. Stock NVIDIA reinstall required for nvidia-smi",
+  "headers_refusal": "PASS --kernel 0-release-test refuses before installation, names the missing headers package",
+  "existing_disk": "PASS 7.2.11: install/linux.sh --kernel; check-configured.sh, check-reload.sh, check-repeat.sh, check-bootstrap.sh; repeat install and two-boot no-Dynamic-Boost smoke"
+ },
+ "no_dynamic_boost": {
+  "powerd": "inactive; SBIOS NVPCF unsupported",
+  "target_125": "success/no-op, target file absent",
+  "boot": "two boots: limit branch, role-8, enforced 125 W",
+  "nvidia_smi_pl_125": "Changing power management limit is not supported for GPU: 00000000:01:00.0.\nTreating as warning and moving on.\nAll done.",
+  "nvidia_smi_exit": 0,
+  "nvml_status": 3,
+  "nvml_message": "Not Supported",
+  "limit_125": {
+   "path": "role-8",
+   "before_w": 80.0,
+   "after_w": 125.0
+  },
+  "limit_off": "role-8; 125 -> 80 W"
+ },
+ "load": {
+  "command": "furmark --demo furmark-vk --width 2560 --height 1440 --vsync 0 --benchmark --duration-ms 30000 --no-score-box",
+  "setup": "FurMark 2.10.2 from nixpkgs; ELF loader/rpath adapted to guest libraries; NVIDIA Xorg headless 2560x1440, Xft.dpi=96",
+  "warmup_seconds": 30,
+  "samples_hz": 1,
+  "mean_window": "30 s benchmark interval",
+  "abort_above_c": 85,
+  "phases": [
+   {
+    "phase": "stock",
+    "current_ma": 99000,
+    "enforced_w": 80,
+    "score": 1308,
+    "mean_w": 79.88,
+    "peak_c": 56.0
+   },
+   {
+    "phase": "limit125",
+    "current_ma": 99000,
+    "enforced_w": 125,
+    "score": 2241,
+    "mean_w": 114.38,
+    "peak_c": 63.0
+   },
+   {
+    "phase": "limit125-current107",
+    "current_ma": 107000,
+    "enforced_w": 125,
+    "score": 2265,
+    "mean_w": 123.35,
+    "peak_c": 67.0
+   },
+   {
+    "phase": "restored",
+    "current_ma": 99000,
+    "enforced_w": 80,
+    "score": 1279,
+    "mean_w": 79.89,
+    "peak_c": 62.0
+   }
+  ],
+  "gpu_faults": 0,
+  "off_after_load": true,
+  "image_ceiling_w": 140,
+  "stock_phase": "runtime 80 W / 99 A; edited image retained",
+  "additional_evidence": "Separate screenshot run with 1 Hz CSV and policy readbacks; terminal captures of configured controls and stock-image rollback"
+ },
+ "kernel_update": "--kernel running-version regression on 7.2.11; fresh installation on 7.2.12; no Fedora upgrade claim",
+ "checks": "12 CLI tests, 7 RM tests, shim tests, nix flake check, nixfmt, statix, ruff (120), shellcheck passed; Predator Dynamic Boost and scratch desktop evaluations passed"
+}

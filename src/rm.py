@@ -60,8 +60,11 @@ class RM:
             struct.pack_into("<I", params, 0, device)
             self.device = self.alloc(self.root, 1, 0x80, params)
             self.subdevice = self.alloc(self.device, 2, 0x2080, bytearray(struct.pack("<I", subdevice)))
-        except BaseException:
-            self.close()
+        except BaseException as original:
+            try:
+                self.close()
+            except Exception as cleanup:
+                original.add_note(f"RM rollback cleanup failed: {cleanup}")
             raise
 
     def ioctl(self, command, raw):
@@ -91,19 +94,36 @@ class RM:
         return values[-1], bytes(params)
 
     def close(self):
-        if self.fd is not None:
+        fd, gpu_fd, root = self.fd, self.gpu_fd, self.root
+        self.fd, self.gpu_fd, self.root = None, None, 0
+        if fd is None:
+            return
+        errors = []
+        if root:
             try:
-                if self.root:
-                    self.ioctl(0x29, bytearray(struct.pack("<IIII", self.root, 0, self.root, 0)))
-            finally:
-                if self.gpu_fd is not None:
-                    os.close(self.gpu_fd)
-                    self.gpu_fd = None
-                os.close(self.fd)
-                self.fd = None
+                raw = bytearray(struct.pack("<IIII", root, 0, root, 0))
+                fcntl.ioctl(fd, ioctl_number(0x29, len(raw)), raw, True)
+                self.check(struct.unpack_from("<I", raw, 12)[0], "free root")
+            except (OSError, RuntimeError) as error:
+                errors.append(error)
+        for descriptor in (gpu_fd, fd):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError as error:
+                    errors.append(error)
+        if errors:
+            for error in errors[1:]:
+                errors[0].add_note(f"Additional RM cleanup failure: {error}")
+            raise errors[0]
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, _type, original, _traceback):
+        try:
+            self.close()
+        except Exception as cleanup:
+            if original is None:
+                raise
+            original.add_note(f"RM cleanup failed: {cleanup}")
