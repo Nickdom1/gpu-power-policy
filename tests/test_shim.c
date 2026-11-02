@@ -19,7 +19,7 @@
 
 static atomic_int resolutions, version_reads, target_reads, identity_probes, fallback_calls, log_messages;
 static int fail_resolution, nvidia_fd = -1;
-static char directory[] = "/tmp/gpu-power-shim.XXXXXX", version_path[256], target_path[256];
+static char directory[] = "/tmp/gpu-power-shim.XXXXXX", version_path[256], target_path[256], ceiling_path[256];
 static void *test_dlsym(void *, const char *);
 static char *test_dlerror(void);
 static int test_openat(int, const char *, int, ...);
@@ -67,6 +67,7 @@ static int test_openat(int dir, const char *path, int flags, ...)
     } else if (!strcmp(path, "/run/gpu-power-policy/target-mw")) {
         atomic_fetch_add(&target_reads, 1); path = target_path;
     }
+    if (!strcmp(path, "/run/gpu-power-policy/ceiling-mw")) path = ceiling_path;
     return openat(dir, path, flags);
 }
 static int test_fstat(int fd, struct stat *st)
@@ -151,8 +152,10 @@ int main(void)
     assert(mkdtemp(directory));
     snprintf(version_path, sizeof(version_path), "%s/version", directory);
     snprintf(target_path, sizeof(target_path), "%s/target", directory);
-    write_text(version_path, "615.71.09\n"); write_text(target_path, "125000\n");
-    setenv("GPU_POWER_DEVICE", "0000:0A:00.0", 1); setenv("GPU_POWER_CEILING_MW", "140000", 1);
+    write_text(version_path, GPU_POWER_DRIVER_VERSION "\n"); write_text(target_path, "125000\n");
+    snprintf(ceiling_path, sizeof(ceiling_path), "%s/ceiling", directory);
+    write_text(ceiling_path, "140000\n");
+    setenv("GPU_POWER_DEVICE", "0000:0A:00.0", 1);
     int fd = open("/dev/null", O_RDWR); assert(fd >= 0);
     fail_resolution = 1; workers(fallback_thread, &fd);
     assert(resolutions == 1 && fallback_calls == 8 && log_messages == 1);
@@ -171,7 +174,15 @@ int main(void)
     assert(!memcmp(raw, expected, sizeof(raw)));
     write_text(target_path, "140001\n"); assert(shim_ioctl(fd, RM_CONTROL, &ctl) == 0);
     assert(!memcmp(raw, expected, sizeof(raw)));
-    write_text(target_path, "125000\n"); ctl.size = 0x188;
+    write_text(target_path, "125000\n");
+    for (int i = 0; i < 3; i++) {
+        if (i == 0) unlink(ceiling_path);
+        if (i == 1) write_text(ceiling_path, "invalid\n");
+        if (i == 2) write_text(ceiling_path, "120000\n");
+        assert(shim_ioctl(fd, RM_CONTROL, &ctl) == 0);
+        assert(!memcmp(raw, expected, sizeof(raw)));
+    }
+    write_text(ceiling_path, "140000\n"); ctl.size = 0x188;
     assert(shim_ioctl(fd, RM_CONTROL, &ctl) == 0); assert(!memcmp(raw, expected, sizeof(raw)));
     ctl.size = sizeof(raw);
     raw[4] = 3; assert(shim_ioctl(fd, RM_CONTROL, &ctl) == 0); assert(word(raw + 0x2c) == 0);
@@ -189,7 +200,7 @@ int main(void)
     puts("shim: cache invalidates on RM_FREE, changed object and close/fd reuse");
     reset(); write_text(version_path, "595.99.02\n"); memset(raw + 0x2c, 0, 4);
     assert(shim_ioctl(fd, RM_CONTROL, &ctl) == 0); assert(word(raw + 0x2c) == 0 && identity_probes == 0);
-    assert(shim_close(fd) == 0); unlink(version_path); unlink(target_path); assert(!rmdir(directory));
+    assert(shim_close(fd) == 0); unlink(version_path); unlink(target_path); unlink(ceiling_path); assert(!rmdir(directory));
     puts("shim: packet, version, target removal and ceiling gates passed; temporary fixtures removed");
     return 0;
 }

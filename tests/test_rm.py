@@ -1,3 +1,4 @@
+from test_pins import FIXTURES, RAISED_FIXTURES
 import ctypes
 import os
 from pathlib import Path
@@ -27,8 +28,10 @@ class TransportTests(unittest.TestCase):
     def test_close_failures_release_both_fds_once_and_check_free_status(self):
         client = rm.RM.__new__(rm.RM)
         client.fd, client.gpu_fd, client.root = 11, 12, 42
+
         def free(_fd, _request, raw, _mutate):
             struct.pack_into("<I", raw, 12, 0x56)
+
         with patch.object(rm.fcntl, "ioctl", side_effect=free) as ioctl:
             with patch.object(rm.os, "close", side_effect=[OSError("GPU close"), None]) as close:
                 with self.assertRaisesRegex(RuntimeError, "free root.*00000056"):
@@ -68,13 +71,14 @@ class TransportTests(unittest.TestCase):
 
     def test_session_selects_bdf_and_allocates_public_structures(self):
         seen = []
+
         def ioctl(fd, request, raw, mutate):
             self.assertEqual((fd, mutate), (12, True))
             command = request & 255
             seen.append(command)
             if command == 210:
                 self.assertEqual(raw[:8], bytes(8))
-                self.assertEqual(raw[8:17], b"615.71.09")
+                self.assertEqual(raw[8:8 + len(rm.VERSION)], rm.VERSION.encode())
                 struct.pack_into("<I", raw, 4, 1)
             elif command == 200:
                 raw[72] = 1
@@ -88,8 +92,9 @@ class TransportTests(unittest.TestCase):
                         self.assertEqual((root, parent, obj, size, ptr), (0, 0, 0, 0, 0))
                         struct.pack_into("<I", raw, 8, 0xCAFE)
                     elif cls == 0x80:
-                        self.assertEqual(open_node.call_args_list[-1],
-                                         call("/dev/nvidia9", rm.os.O_RDWR | rm.os.O_CLOEXEC))
+                        self.assertEqual(
+                            open_node.call_args_list[-1], call("/dev/nvidia9", rm.os.O_RDWR | rm.os.O_CLOEXEC)
+                        )
                         close.assert_not_called()
                         self.assertEqual((root, parent, obj, size), (0xCAFE, 0xCAFE, 1, 56))
                         self.assertEqual(ctypes.string_at(ptr, size), struct.pack("<I", 3) + bytes(52))
@@ -106,6 +111,7 @@ class TransportTests(unittest.TestCase):
                         params[0] = 33
             elif command == 0x29:
                 self.assertEqual(struct.unpack("<IIII", raw), (0xCAFE, 0, 0xCAFE, 0))
+
         with patch.object(rm.os, "open", side_effect=[12, 13]) as open_node, patch.object(rm.os, "close") as close:
             with patch.object(rm.fcntl, "ioctl", side_effect=ioctl), rm.RM("0000:01:00.0") as client:
                 status, data = client.control(policy.STATUS, bytes(policy.SIZES[policy.STATUS]))
@@ -139,6 +145,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_write_gate_and_one_word_roundtrip(self):
         info, control = buffers()
+
         class Fake:
             def control(self, command, raw):
                 if command == policy.SET:
@@ -147,6 +154,7 @@ class PolicyTests(unittest.TestCase):
                     assert raw == expected
                     control[:] = raw
                 return 0, bytes(control)
+
         with self.assertRaisesRegex(ValueError, "reply size"):
             policy.set_current(Fake(), info[:-1], 99000, 120000, 107000)
         self.assertEqual(policy.set_current(Fake(), info, 99000, 120000, 107000), 107000)
@@ -156,14 +164,16 @@ class PolicyTests(unittest.TestCase):
     def test_ambiguous_policy_and_readback_refuse(self):
         info, control = buffers()
         extra, _ = buffers(9)
-        info[0xCC + 9 * 0x104:0xCC + 10 * 0x104] = extra[0xCC + 9 * 0x104:0xCC + 10 * 0x104]
+        info[0xCC + 9 * 0x104 : 0xCC + 10 * 0x104] = extra[0xCC + 9 * 0x104 : 0xCC + 10 * 0x104]
         struct.pack_into("<I", info, 4, (1 << 7) | (1 << 9))
         with self.assertRaisesRegex(ValueError, "not unique"):
             policy.current_policy(info, control, 99000, 120000)
         info, control = buffers()
+
         class Unchanged:
             def control(self, command, raw):
                 return 0, bytes(control)
+
         with self.assertRaisesRegex(RuntimeError, "readback"):
             policy.set_current(Unchanged(), info, 99000, 120000, 107000)
         control[:16] = bytes(16)
@@ -173,7 +183,24 @@ class PolicyTests(unittest.TestCase):
 
 class LiveFixtureTests(unittest.TestCase):
     # RTX 3080 Ti Laptop GPU, driver 615.71.09, image 140/80 W and 120000/99000 mA; read-only GETs.
-    fixtures = Path(__file__).parent / "fixtures/615.71.09"
+    fixtures = RAISED_FIXTURES
+
+    def test_new_stock_capture_limits_are_not_the_old_raised_limits(self):
+        info = (FIXTURES / "a618.bin").read_bytes()
+        full = (FIXTURES / "a61a.bin").read_bytes()
+        single = (FIXTURES / "a61a-current.bin").read_bytes()
+        status = (FIXTURES / "a619.bin").read_bytes()
+        for command, raw in ((policy.INFO, info), (policy.GET, full), (policy.GET, single), (policy.STATUS, status)):
+            policy.checked(command, raw)
+        self.assertEqual(policy.table(policy.INFO, info)[2]["words"][:3], [1000, 80000, 115000])
+        self.assertEqual(policy.u32(info, 4), 0x7F21F)
+        self.assertEqual(policy.u32(status, 4), 0x7F21F)
+        self.assertEqual(policy.u32(single, 16), 1 << 13)
+        self.assertEqual(single[:16], bytes(12) + bytes.fromhex("ff000000"))
+        self.assertEqual(policy.u32(single, 0x3114), 0)
+        self.assertEqual(policy.u32(single, 0x3298), 0)
+        for raw in (full, single):
+            self.assertEqual(policy.current_policy(info, raw, 99000, 120000), (13, 99000, 99000, 99000))
 
     def test_live_tables_and_current_roundtrip(self):
         info = (self.fixtures / "a618.bin").read_bytes()
@@ -190,9 +217,11 @@ class LiveFixtureTests(unittest.TestCase):
         self.assertEqual(single[0xA08], 15)
         self.assertEqual(policy.u32(single, 0xA0C), 99000)
         test = self
+
         class Captured:
             current = single
             writes = 0
+
             def control(self, command, raw):
                 if command == policy.SET:
                     test.assertEqual(raw[:0xA0C], self.current[:0xA0C])
@@ -202,6 +231,7 @@ class LiveFixtureTests(unittest.TestCase):
                     return 0, self.current
                 test.assertEqual(command, policy.GET)
                 return 0, full if policy.u32(raw, 0x10) == 0x7F21F else self.current
+
         client = Captured()
         for value in (107000, 99000):
             self.assertEqual(policy.set_current(client, info, 99000, 120000, value), value)

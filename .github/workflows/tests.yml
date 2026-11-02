@@ -10,8 +10,22 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -v
+      - name: Shell and Python lint
+        run: |
+          python3 -m pip install ruff==0.15.14
+          ruff check --select E4,E7,E9,F,B905,E501 --line-length 120 src install tests
+          shellcheck install/*.sh src/*.sh
       - name: Build and test the powerd shim
         run: |
-          cc -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared -pthread -o /tmp/libpowerd-shim.so src/powerd-shim.c -ldl
-          cc -std=c11 -Wall -Wextra -Werror -O1 -pthread -o /tmp/shim-test tests/test_shim.c -ldl
+          source install/pins.sh
+          cc -DGPU_POWER_DRIVER_VERSION="\"$version\"" -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared -pthread -o /tmp/libpowerd-shim.so src/powerd-shim.c -ldl
+          cc -DGPU_POWER_DRIVER_VERSION="\"$version\"" -std=c11 -Wall -Wextra -Werror -O1 -pthread -o /tmp/shim-test tests/test_shim.c -ldl
           /tmp/shim-test
+  nix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: nix flake check

@@ -1,0 +1,40 @@
+{
+  "driver": "615.78.08",
+  "mode": "stock",
+  "gpu": "10de:2460 RTX 3080 Ti Laptop",
+  "rom_sha256": "13051902cd7de8847189df50a4e9a2d84d5fded6215467895ca550198491adb1",
+  "power_watts": {
+    "default": 80,
+    "maximum": 115
+  },
+  "current_milliamps": {
+    "rated": 99000,
+    "maximum": 99000
+  },
+  "capture_utc": "2026-11-01T21:06:48.674848+00:00",
+  "candidate": "311e9839cc4e0fafc2002ce8c05ee170494d99d7",
+  "evidence": "pt516-gpu-power/tools/first-run-v2-lab/review-v4/nixos/round-1/",
+  "adjudication": "p2-49-E1-adjudication.json",
+  "captures": "abi-615.78.08-stock/",
+  "scope": "Read-only GETs before any SET. NixOS userspace used the recorded guest-only patchelf repair.",
+  "cross_checks": "Fedora p2-39, Ubuntu p2-29, CachyOS p2-51: identical decoded tables and ROM; no ABI decoder change.",
+  "previous_fixture": "615.71.09 is a raised 140 W / 120000 mA capture, retained as a distinct regression case.",
+  "files": {
+    "a618.bin": {
+      "bytes": 20512,
+      "sha256": "3812d1aa516d98ceb87f14e4a51695b3f44d1419073f9f799cc94b32300804c2"
+    },
+    "a619.bin": {
+      "bytes": 397048,
+      "sha256": "1cf1add83a17b90287cd66c6ffffea5ed75d8fcc8056df6a32250e84f5c8586d"
+    },
+    "a61a.bin": {
+      "bytes": 13876,
+      "sha256": "4b48b39c10ef0c3fbc57f71355dc5c53c0cd76c90a886f90bc8d1ca52915f3fb"
+    },
+    "a61a-current.bin": {
+      "bytes": 13876,
+      "sha256": "c9feadf687e4d44f33f468cc9882c061b5d09e53d8072338f8cc88647dcd5833"
+    }
+  }
+}

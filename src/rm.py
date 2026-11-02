@@ -1,10 +1,11 @@
-"""Minimal Linux RM transport for the public NVIDIA 615.71.09 ABI."""
+"""Minimal Linux RM transport for the public NVIDIA 615.78.08 ABI."""
+
 import ctypes
 import fcntl
 import os
 import struct
 
-VERSION = "615.71.09"
+VERSION = "615.78.08"
 NVOS21 = struct.Struct("<IIIIQII")
 NVOS54 = struct.Struct("<IIIIQII")
 CARD_SIZE = 72
@@ -23,9 +24,13 @@ def cards(raw):
     for off in range(0, len(raw), CARD_SIZE):
         if raw[off]:
             domain, bus, slot, function = struct.unpack_from("<IBBB", raw, off + 4)
-            result.append({"bdf": f"{domain:04x}:{bus:02x}:{slot:02x}.{function}",
-                           "gpu_id": struct.unpack_from("<I", raw, off + 16)[0],
-                           "minor": struct.unpack_from("<I", raw, off + 56)[0]})
+            result.append(
+                {
+                    "bdf": f"{domain:04x}:{bus:02x}:{slot:02x}.{function}",
+                    "gpu_id": struct.unpack_from("<I", raw, off + 16)[0],
+                    "minor": struct.unpack_from("<I", raw, off + 56)[0],
+                }
+            )
     return result
 
 

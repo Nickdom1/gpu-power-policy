@@ -1,3 +1,4 @@
+# NVIDIA source tag: 615.78.08
 Per-GPU in-memory VBIOS override for NVIDIA open-gpu-kernel-modules 615.71.09.
 Generated from nvidia-linux-vbios-vix-loader 418942a5fe40269787d4b57e97ab0d2a922011cc
 (src/nvidia_vbios/driver, apply_to_tree) against the unmodified 615.71.09 tag.

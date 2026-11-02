@@ -2,17 +2,17 @@
   "nodes": {
     "nixpkgs": {
       "locked": {
-        "lastModified": 1790125458,
-        "narHash": "sha256-nbmPIVbFz0Acku3z5fJwYoqMtEwiLWdrcLkEWJyz5U0=",
+        "lastModified": 1792210252,
+        "narHash": "sha256-Mh0PUaIv4nFY+8wAGonaEh8iBzwsmdNlwjVHmFg1Biw=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "58a20b0a882fffd508ca4dad73836d76632792a3",
+        "rev": "09063bd1f2b36fd9fd793c36dfade7bd40a93dfc",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "58a20b0a882fffd508ca4dad73836d76632792a3",
+        "rev": "09063bd1f2b36fd9fd793c36dfade7bd40a93dfc",
         "type": "github"
       }
     },
@@ -35,7 +35,6 @@
       "original": {
         "owner": "Panchovix",
         "repo": "nvidia-vbios-vix-editor",
-        "rev": "edf0f483d8d4a3d7a578f941647c95b503ab9795",
         "type": "github"
       }
     }

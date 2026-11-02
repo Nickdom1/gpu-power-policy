@@ -46,14 +46,20 @@ def table(command, raw):
     return rows
 
 
-def current_policy(info, control, rated, ceiling, *, restoring=False):
-    candidates = [r for r in table(INFO, info) if r["cls"] == 15 and r["words"][1] == rated]
+def current_policy(info, control, rated, ceiling, *, index=None, restoring=False):
+    candidates = [
+        r
+        for r in table(INFO, info)
+        if r["cls"] == 15 and (r["index"] == index if index is not None else r["words"][1] == rated)
+    ]
     if len(candidates) != 1:
         raise ValueError("current policy class/rated value is not unique")
     row = candidates[0]
     low, live_rated, high, _ = row["words"]
     if not 0 < low <= live_rated <= high:
         raise ValueError("A618 current bounds are inconsistent")
+    if live_rated != rated:
+        raise ValueError("A618 current rated value differs from the captured ROM")
     lower, upper = max(rated, low), min(ceiling, high)
     matches = [r for r in table(GET, control) if r["index"] == row["index"] and r["cls"] == 15]
     live_lower = low if restoring else lower
@@ -62,13 +68,13 @@ def current_policy(info, control, rated, ceiling, *, restoring=False):
     return row["index"], matches[0]["limit"], lower, upper
 
 
-def set_current(rm, info, rated, ceiling, value):
+def set_current(rm, info, rated, ceiling, value, *, index=None):
     control = query(rm, GET, u32(info, 4))
-    index, _, lower, upper = current_policy(info, control, rated, ceiling)
+    index, _, lower, upper = current_policy(info, control, rated, ceiling, index=index)
     if not lower <= value <= upper:
         raise ValueError(f"current must be within {lower}..{upper} mA")
     control = query(rm, GET, 1 << index)
-    current_policy(info, control, rated, ceiling)
+    current_policy(info, control, rated, ceiling, index=index)
     if control[:16] != bytes(12) + bytes.fromhex("ff000000") or u32(control, 0x3114) or u32(control, 0x3298):
         raise ValueError("unexpected A61A header or relationship/violation masks")
     changed = bytearray(control)
@@ -76,7 +82,7 @@ def set_current(rm, info, rated, ceiling, value):
     _, reply = rm.control(SET, changed)
     checked(SET, reply)
     readback = query(rm, GET, 1 << index)
-    _, actual, _, _ = current_policy(info, readback, rated, ceiling)
+    _, actual, _, _ = current_policy(info, readback, rated, ceiling, index=index)
     if actual != value:
         raise RuntimeError(f"current SET readback {actual} != {value} mA; inspect status")
     return actual

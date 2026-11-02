@@ -2,17 +2,22 @@
 # Shared installer guards, kept separate so failure paths can be tested without root.
 fail() { echo "gpu-power-policy: $*" >&2; exit 1; }
 
-require_secure_boot_off() {
-    local efi=$1 secureboot value found=false
-    [[ -d $efi ]] || return 0 # Legacy BIOS has no UEFI Secure Boot state.
-    for secureboot in "$efi"/efivars/SecureBoot-*; do
-        [[ -e $secureboot ]] || continue
-        found=true
-        value=$(od -An -tu1 -j4 -N1 "$secureboot") || fail "Cannot read Secure Boot state from $secureboot. Mount efivarfs and retry."
-        [[ $value =~ ^[[:space:]]*[01][[:space:]]*$ ]] || fail "Invalid or empty Secure Boot state in $secureboot; refusing unsigned modules."
-        [[ $value -eq 0 ]] || fail 'Secure Boot is enabled. Disable it in firmware; this installer does not sign modules.'
-    done
-    $found || fail 'UEFI Secure Boot state is unavailable. Mount efivarfs or use firmware exposing SecureBoot; refusing unsigned modules.'
+# The config path is optional; production callers use the default.
+# shellcheck disable=SC2120
+repair_installer() {
+    python3 - "${1:-/etc/gpu-power-policy.json}" 2>/dev/null <<'PY_REPAIR' || echo 'sudo bash install/linux.sh'
+import json,shlex,sys
+from pathlib import Path
+p=Path(sys.argv[1]); c=json.loads(p.read_text()) if p.exists() else {}
+checkout=Path(c.get('installerCheckout') or '.')
+script=checkout/'install/linux.sh'
+print('sudo bash '+shlex.quote(str(script) if checkout.is_absolute() and script.is_file() else 'install/linux.sh'))
+PY_REPAIR
+}
+
+installed_for() {
+    [[ $(modinfo -k "$1" -F version nvidia 2>/dev/null) == "${version:?}" &&
+       $(modinfo -k "$1" -F vbios_override_per_gpu nvidia 2>/dev/null) == 1 ]]
 }
 
 download_driver() {
@@ -29,11 +34,43 @@ download_driver() {
     [[ $candidate == "$run" ]] || mv "$candidate" "$run"
 }
 
-cleanup_override() {
-    local version=$1 modconf=$2 dracutconf=$3 ubuntuhook=$4 dropin=$5
-    # Stop powerd before removing its shim, including upgrades from installers without state tracking.
-    systemctl disable --now nvidia-powerd.service 2>/dev/null || true
-    rm -f "$modconf" "$dracutconf" "$ubuntuhook" "$dropin" \
-        /etc/dbus-1/system.d/nvidia-dbus.conf /run/gpu-power-policy/target-mw
-    rm -rf "/lib/firmware/nvidia/$version/vbios-override"
+# A repair clears only its own failure; other kernels may still need attention.
+clear_kernel_notice() {
+    python3 - "$1" "${2:-/var/lib/gpu-power-policy/kernel-notice}" <<'PY_NOTICE'
+from pathlib import Path
+import sys
+kernel,name=sys.argv[1:]; p=Path(name)
+if p.exists():
+    lines=[line for line in p.read_text().splitlines() if f'the module for {kernel} did not build' not in line]
+    if lines: p.write_text('\n'.join(lines)+'\n')
+    else: p.unlink()
+PY_NOTICE
+}
+
+rebuild_installed_kernels() {
+    local hook=$1 directory kernel failed=0
+    for directory in "${2:-/usr/lib/modules}"/*; do
+        [[ -d $directory/build ]] || continue
+        kernel=${directory##*/}
+        installed_for "$kernel" && continue
+        bash "$hook" rebuild "$kernel" || failed=1
+    done
+    return "$failed"
+}
+
+# Rebuild a request from the one runtime configuration; explicit flags win.
+saved_flags() {
+    python3 - "$@" <<'PY'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); c=json.loads(p.read_text()) if p.exists() else {}
+if c.get('device') == sys.argv[2]:
+    rom=c.get('romBaseline', {}); stock=rom.get('values', {})
+    for key,flag in [('powerCeilingWatts','--power-ceiling'),('currentCeilingMilliamps','--current-ceiling')]:
+        if key in stock and c.get(key) != stock[key] and not (rom.get('family') == 'ada' and key.startswith('current')):
+            print(flag); print(c[key])
+    if c.get('powerdTargetWatts') is not None: print('--boot-power'); print(c['powerdTargetWatts'])
+    if c.get('beyondTested'): print('--beyond-tested')
+for flag in sys.argv[3:]: print(flag)
+PY
 }

@@ -1,0 +1,23 @@
+# NVIDIA source tag: 615.78.08
+Guard CXL state with NVIDIA's existing capability probe, not header presence.
+
+Ubuntu's 7.0 HWE headers expose cxl/cxl.h without the newer cxl_dev_state API.
+The upstream cxl_init_supported conftest already checks that API and the driver
+uses its result around all CXL state accesses. Use the same result for the state
+declaration; merely finding a CXL header does not make that structure usable.
+
+--- a/kernel-open/common/inc/nv-linux.h
++++ b/kernel-open/common/inc/nv-linux.h
+@@ -1268,5 +1268,5 @@
+-#if defined(NV_CXL_CXL_H_PRESENT)
++#if defined(NV_CXL_INIT_SUPPORTED)
+ struct nv_cxl {
+     struct cxl_dev_state         cxlds;
+     struct cxl_memdev           *cxlmd;
+     struct cxl_endpoint_decoder *cxled;
+@@ -1290,4 +1290,4 @@
+-#if defined(NV_CXL_CXL_H_PRESENT)
++#if defined(NV_CXL_INIT_SUPPORTED)
+     /* CXL device state; NULL for non-CXL GPUs */
+     struct nv_cxl *cxl;
+ #endif

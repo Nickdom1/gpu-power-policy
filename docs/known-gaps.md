@@ -1,27 +1,12 @@
 # Known gaps
 
-What the current release does not do, in the order it matters to someone installing it. Each item names the intended fix; none is started yet.
+The [README Results](../README.md#results) cover one laptop. Other boards, sustained raised operation, games, suspend/resume, battery transitions and multi-GPU systems have no end-to-end validation here.
 
-Validated configuration: RTX 3080 Ti Laptop GPU (GA103) in an Acer PT516-52s, driver 615.71.09, Linux 7.2.7. Other Ampere, Ada and Turing laptops have an image path but no end-to-end result here; Blackwell images are refused; desktop cards are unverified. The limits you set are your responsibility, and the tested 107 A is one board's measurement, not a recommendation.
-
-1. **Exact driver version.** Everything checks for `615.71.09`, not the 615 series. Policy packet sizes and offsets were verified against that build only. Intended fix: a small table of verified versions and layouts, plus an option to accept an unverified point release with a warning.
-2. **Current recovery.** If a current readback mismatches, the prior value is not restored automatically. Intended fix: restore the previous current on failure.
-3. **Battery.** The boot target applies on battery too. Intended fix: an `onBattery` option that passes the stock target through when the AC adapter is offline, identified by supply type rather than "any supply offline".
-4. **Other distributions.** Fedora 43 and Ubuntu 24.04 share an installer, tested in GPU-passthrough VMs (`docs/install.md`). Still missing: bare-metal tests on these distributions with Dynamic Boost, module signing for Secure Boot, automatic module rebuilds on kernel updates, and an Arch package/initramfs route.
-5. **Diagnostics.** `status` prints raw policy tables; the firmware arbitration status (A619) is captured by `dump` but not decoded. Intended fix: decode enough of it to name which policy is binding, as the research branch's `tools/policy-status/codec.py` did for 595.
-6. **Not validated:** sustained operation at the image ceilings, games, suspend and resume, battery transitions, multi-GPU systems.
-7. **NixOS integration tests.** CI runs the Python and shim CPU suites; `nix flake check` also evaluates scratch NixOS configurations, but there is no NixOS VM test yet.
-8. **Lost selection log.** `current off` still lowers to rated after the selection log disappears; `limit off` requires selection evidence, so combined `off` can report a limit-step failure.
-
-Smaller items, not scheduled:
-
-- The CLI is not an importable package; both install paths rewrite it with `sed`.
-- The flake builds only `x86_64-linux`.
-- Packages lack `description`, `mainProgram` and `platforms` metadata.
-- `hardware.gpuPowerPolicy` uses a namespace owned by nixpkgs.
-- `hardware.nvidia.package` uses an attrset merge; a later `.overrideAttrs` can lose the patch, and profiles setting the same option can conflict.
-- `dump` writes files using the default umask.
-- Every failure uses the same exit code.
-- Subprocesses have no timeouts, and the CLI lock blocks.
-- Boot-VBIOS capture is freed on device teardown, not module unload; the proc node then reports no capture for a GPU that booted.
-- Boot-VBIOS allocation uses `GFP_KERNEL` while GPU locks are held.
+- The runtime ABI is pinned to NVIDIA 615.78.08; other versions are refused. Live confirmation and fixture recapture are pending; the recorded GET fixtures and Dynamic Boost E634 layout still come from 615.71.09.
+- Ada current control and Ada laptop image raises are unavailable. Ada desktop power raising is experimental.
+- The target override replaces Dynamic Boost CPU/GPU and adapter arbitration and also applies on battery. There is no AC or thermal watchdog; regulator temperature is not measured.
+- Current SET verifies readback but does not automatically restore the preceding value after a mismatched readback. Run `sudo gpu-power off` and inspect status.
+- Firmware arbitration status A619 is captured by `dump` but is not decoded to identify the binding limiter.
+- CPU tests cannot establish Secure Boot enrollment, a working desktop after recovery, or hardware safety. Each release needs its documented hardware and distribution lifecycle checks; older VM evidence is not validation of a newer flow.
+- CachyOS updates replace kernels in place. Its LTS kernel is an explicit fallback, not a guarantee of automatic rollback.
+- The CLI targets x86_64 Linux; there is no GUI or Windows implementation here.

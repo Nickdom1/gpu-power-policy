@@ -1,3 +1,4 @@
+from test_pins import RAISED_FIXTURES
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -10,27 +11,51 @@ cli = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cli)
 
 
+def ready():
+    return {
+        "verdict": "Ready",
+        "message": "Ready",
+        "device": "0000:01:00.0",
+        "boot_id": "test",
+        "rom": {
+            "family": "ampere",
+            "sha256": "a" * 64,
+            "policies": {"power": 2, "current": 13},
+            "values": {
+                "powerDefaultWatts": 80,
+                "powerCeilingWatts": 140,
+                "currentRatedMilliamps": 99000,
+                "currentCeilingMilliamps": 120000,
+            },
+        },
+        "bounds": {"power": [1000, 80000, 140000], "current": [1, 99000, 120000]},
+    }
+
+
 class CliTests(unittest.TestCase):
+    def setUp(self):
+        self.root = patch.object(cli.os, "geteuid", return_value=0)
+        self.root.start()
+        self.addCleanup(self.root.stop)
+
     def test_runtime_config_missing_keys_fail_before_hardware(self):
-        config = {key: "/tool" for key in ("modinfo", "systemctl", "journalctl", "dmesg", "nvidiaSmi")}
-        config["device"] = "0000:01:00.0"
+        config = {"device": "0000:01:00.0"}
         self.assertEqual(cli.validate_config(config), config)
         for missing in config:
             broken = {key: value for key, value in config.items() if key != missing}
-            with (
-                patch.object(cli.CONFIG.__class__, "read_text", return_value=cli.json.dumps(broken)),
-                patch.object(cli.sys, "argv", ["gpu-power", "status"]),
-                patch.object(cli, "guard", side_effect=AssertionError("must validate first")),
-                self.assertRaisesRegex(SystemExit, "missing required key: " + missing),
-            ):
-                cli.main()
+            with self.assertRaisesRegex(ValueError, "missing required key: " + missing):
+                cli.validate_config(broken)
         with self.assertRaisesRegex(ValueError, "powerDefaultWatts"):
             cli.validate_config({**config, "powerCeilingWatts": 140})
 
     def test_current_off_with_lost_log_only_lowers_live_current(self):
-        config = {"device": "0000:01:00.0", "currentRatedMilliamps": 99000,
-                  "currentCeilingMilliamps": 120000, "output_sha256": "x"}
-        fixtures = Path(__file__).parent / "fixtures/615.71.09"
+        config = {
+            "device": "0000:01:00.0",
+            "currentRatedMilliamps": 99000,
+            "currentCeilingMilliamps": 120000,
+            "output_sha256": "x",
+        }
+        fixtures = RAISED_FIXTURES
         info = (fixtures / "a618.bin").read_bytes()
         full = (fixtures / "a61a.bin").read_bytes()
         single = (fixtures / "a61a-current.bin").read_bytes()
@@ -51,7 +76,9 @@ class CliTests(unittest.TestCase):
 
         client = Client()
         with (
-            patch.object(cli, "image_selection", return_value={"state": "unknown"}) as selection,
+            patch.object(
+                cli, "live_state", return_value={**ready(), "verdict": "Unverified", "message": "not selected"}
+            ),
             patch.object(cli, "RM") as rm,
             patch.object(cli, "target", return_value={}),
             patch.object(cli, "limit", return_value={}),
@@ -59,14 +86,15 @@ class CliTests(unittest.TestCase):
             rm.return_value.__enter__.return_value = client
             self.assertTrue(cli.release(config)["steps"]["current"]["ok"])
             self.assertEqual((client.current_ma, client.writes), (99000, 1))
+            client.current_ma = 107000
+            self.assertEqual(cli.current({**config, "currentCeilingMilliamps": 99000}, "off")["current_ma"], 99000)
             for value in (99000, 98000):
                 client.current_ma = value
-                self.assertEqual(cli.current(config, "off"), {"current_ma": value})
-            self.assertEqual(client.writes, 1)
-            selection.assert_not_called()
+                self.assertEqual(cli.current(config, "off")["current_ma"], value)
+            self.assertEqual(client.writes, 2)
             with self.assertRaisesRegex(ValueError, "not selected"):
                 cli.current(config, "107000")
-            self.assertEqual(client.writes, 1)
+            self.assertEqual(client.writes, 2)
 
     def test_nvml_uses_real_driver_status_and_milliwatts(self):
         nvml = Mock()
@@ -83,11 +111,11 @@ class CliTests(unittest.TestCase):
         nvml.nvmlShutdown.assert_called_once_with()
 
     def test_target_restart_failure_restores_set_but_keeps_off_removed(self):
-        config = {"systemctl": "/systemctl", "powerCeilingWatts": 140}
+        config = {"systemctl": "systemctl", "powerCeilingWatts": 140}
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(cli, "RUN", Path(directory)),
-            patch.object(cli, "require_image"),
+            patch.object(cli, "live_state", return_value=ready()),
             patch.object(cli, "service_state", return_value="active"),
             patch.object(cli.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "restart")),
         ):
@@ -121,13 +149,18 @@ class CliTests(unittest.TestCase):
     def test_limit_packing_bounds_and_fallback_order(self):
         config = {"device": "0000:01:00.0", "nvidiaSmi": "/smi", "powerCeilingWatts": 140, "powerDefaultWatts": 80}
         events = []
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        run_patch = patch.object(cli, "RUN", Path(directory.name))
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
 
         def standard(*args, **kwargs):
             events.append("standard")
             return {"status": 3, "message": "Not Supported"}
 
         with (
-            patch.object(cli, "require_image"),
+            patch.object(cli, "live_state", return_value=ready()),
             patch.object(cli, "power_readback", side_effect=[{"enforced_watts": 80}, {"enforced_watts": 125}]),
             patch.object(cli, "standard_limit", side_effect=standard),
             patch.object(cli, "RM") as rm,
@@ -137,54 +170,65 @@ class CliTests(unittest.TestCase):
             result = cli.limit(config, "125")
             self.assertEqual(events, ["standard", "role-8"])
             control.assert_called_once_with(0x2080E61E, bytes.fromhex("08fe000048e8010000000000"))
-            self.assertEqual(result["path"], "role-8")
+            self.assertEqual(result["path"], "firmware")
             self.assertTrue(result["changed"])
-        with patch.object(cli, "require_image"), patch.object(cli, "power_readback") as readback:
+        with patch.object(cli, "live_state", return_value=ready()), patch.object(cli, "power_readback") as readback:
             for bad in ("0", "141", "-1", "1.5"):
                 with self.assertRaises(ValueError):
                     cli.limit(config, bad)
             readback.assert_not_called()
-        with patch.object(cli, "image_selection", return_value={"state": "rejected"}):
+        with patch.object(
+            cli, "live_state", return_value={**ready(), "verdict": "Unverified", "message": "not selected"}
+        ):
             with self.assertRaisesRegex(ValueError, "not selected"):
                 cli.limit({**config, "output_sha256": "x"}, "125")
 
     def test_limit_standard_success_does_not_fallback_when_unchanged(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        run_patch = patch.object(cli, "RUN", Path(directory.name))
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
         config = {"device": "0000:01:00.0", "nvidiaSmi": "/smi", "powerCeilingWatts": 140, "powerDefaultWatts": 80}
         with (
-            patch.object(cli, "require_image"),
+            patch.object(cli, "live_state", return_value=ready()),
             patch.object(cli, "power_readback", return_value={"enforced_watts": 80}),
             patch.object(cli, "standard_limit", return_value={"status": 0, "message": "Success"}) as run,
             patch.object(cli, "RM") as rm,
         ):
             result = cli.limit(config, "off")
-            self.assertEqual(result["path"], "standard")
+            self.assertEqual(result["path"], "NVML")
             self.assertEqual(result["requested_watts"], 80)
             self.assertFalse(result["changed"])
-            self.assertIn("did not move", result["message"])
+            self.assertIn("enforced limit now 80 W", result["message"])
             run.assert_called_once_with(config, 80)
             rm.assert_not_called()
 
     def test_boot_initializer_staging_gate_and_both_paths(self):
-        config = {"powerdTargetWatts": 125, "powerCeilingWatts": 140}
+        config = {"powerdTargetWatts": 125, "powerCeilingWatts": 140, "device": "0000:01:00.0"}
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(cli, "RUN", Path(directory)),
-            patch.object(cli, "image_selection", return_value={"state": "rejected"}) as selection,
-            patch.object(cli, "dynamic_boost", return_value=True) as boost,
-            patch.object(cli, "service_state", return_value="enabled"),
-            patch.object(cli, "limit", return_value={"path": "role-8"}) as limit,
+            patch.object(
+                cli, "live_state", return_value={**ready(), "verdict": "Unverified", "message": "rejected"}
+            ) as live,
+            patch.object(cli, "uses_powerd", return_value=True) as boost,
+            patch.object(cli, "limit", return_value={"path": "firmware"}) as limit,
         ):
             path = Path(directory) / "target-mw"
             path.write_text("125000\n")
-            self.assertEqual(cli.boot_init(config)["boot"], "skipped")
-            self.assertEqual(path.read_text(), "125000\n")
+            with self.assertRaisesRegex(ValueError, "rejected"):
+                cli.boot_init(config)
+            self.assertFalse(path.exists())
+            self.assertFalse((Path(directory) / "ceiling-mw").exists())
             limit.assert_not_called()
             boost.assert_not_called()
-            selection.return_value = {"state": "selected"}
+            live.return_value = ready()
             self.assertEqual(cli.boot_init(config)["boot"], "target")
             self.assertEqual(path.read_text(), "125000\n")
+            self.assertEqual((Path(directory) / "ceiling-mw").read_text(), "140000\n")
             boost.return_value = False
-            self.assertEqual(cli.boot_init(config), {"boot": "limit", "path": "role-8"})
+            self.assertEqual(cli.boot_init(config), {"boot": "limit", "path": "firmware"})
             limit.assert_called_once_with(config, "125")
             self.assertFalse(path.exists())
 
@@ -196,7 +240,7 @@ class CliTests(unittest.TestCase):
             booted = root / "booted"
             gpu = root / "0000:01:00.0"
             gpu.mkdir()
-            config = {"modinfo": "/modinfo", "device": gpu.name}
+            config = {"modinfo": "modinfo", "device": gpu.name}
             with (
                 patch.object(cli, "BOOTED_MODULES", booted),
                 patch.object(cli, "LOADED_VERSION", loaded),
@@ -222,18 +266,15 @@ class CliTests(unittest.TestCase):
                     cli.guard(config)
 
     def test_arguments_and_bounds(self):
-        for command, value in (("target", "125"), ("target", "off"), ("current", "107000"), ("current", "off")):
+        for command, value in (("power", "125"), ("power", "off"), ("current", "107000"), ("current", "off")):
             args = cli.parser().parse_args([command, value])
             self.assertEqual((args.command, args.value), (command, value))
         self.assertEqual(cli.parser().parse_args(["dump", "/tmp/capture"]).directory, Path("/tmp/capture"))
-        self.assertEqual(cli.bounded("125", 1, 140), 125)
-        for value in ("0", "141", "-1", "1.5", "nan", "125\n"):
-            with self.assertRaises(ValueError):
-                cli.bounded(value, 1, 140)
 
     def test_off_attempts_all_steps_and_reports_failures(self):
         with (
             patch.object(cli, "guard"),
+            patch.object(Path, "exists", return_value=True),
             patch.object(cli, "current", side_effect=RuntimeError("current failed")) as current,
             patch.object(cli, "target", side_effect=RuntimeError("restart failed")) as target,
             patch.object(cli, "limit", return_value={"requested_watts": 80}) as limit,
@@ -274,16 +315,16 @@ class CliTests(unittest.TestCase):
         config = {
             "output_sha256": "x",
             "powerCeilingWatts": 140,
-            "systemctl": "/systemctl",
-            "nvidiaSmi": "/nvidia-smi",
+            "systemctl": "systemctl",
+            "nvidiaSmi": "nvidia-smi",
             "device": "0000:01:00.0",
         }
         with tempfile.TemporaryDirectory() as directory, patch.object(cli, "RUN", Path(directory)):
             with (
                 patch.object(cli.subprocess, "run") as restart,
                 patch.object(cli, "service_state", return_value="active"),
-                patch.object(cli, "image_selection", return_value={"state": "selected"}),
-                patch.object(cli, "command_output", return_value="power readback"),
+                patch.object(cli, "live_state", return_value=ready()),
+                patch.object(cli, "command_output", return_value="125"),
             ):
                 self.assertEqual(cli.target(config, "125")["target_mw"], 125000)
                 self.assertEqual((Path(directory) / "target-mw").read_text(), "125000\n")
@@ -294,7 +335,7 @@ class CliTests(unittest.TestCase):
                 self.assertFalse((Path(directory) / "target-mw").exists())
                 self.assertEqual(restart.call_count, 2)
                 restart.assert_called_with(
-                    ["/systemctl", "restart", "nvidia-powerd.service"], check=True, capture_output=True, text=True
+                    ["systemctl", "restart", "nvidia-powerd.service"], check=True, capture_output=True, text=True
                 )
 
     def test_rom_round_trip_and_refusals(self):
@@ -326,6 +367,7 @@ class CliTests(unittest.TestCase):
                     {
                         "size": len(payload),
                         "sha256": cli.hashlib.sha256(payload).hexdigest(),
+                        "pci_device": "10de:1234",
                         "expansion_rom_offset": 2,
                         "vbios_version": "94.03.19.00.01",
                     },

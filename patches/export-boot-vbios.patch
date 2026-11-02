@@ -1,3 +1,4 @@
+# NVIDIA source tag: 615.78.08
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 Nicholas DeTello
 Capture-only port from gpu-power-policy-github/module/policy-shim.patch to

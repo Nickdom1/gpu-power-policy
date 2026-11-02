@@ -1,11 +1,11 @@
 {
-  description = "In-memory VBIOS power-policy edit, nvidia-powerd target override and runtime current control for NVIDIA 615.71.09 laptops";
+  description = "In-memory VBIOS power-policy edit, nvidia-powerd target override and runtime current control for NVIDIA 615.78.08 laptops";
 
   inputs = {
-    # Same revision as the host's nixpkgs-kernel input: Linux 7.2.7 and NVIDIA 615.71.09.
-    nixpkgs.url = "github:nixos/nixpkgs/58a20b0a882fffd508ca4dad73836d76632792a3";
+    # Pinned compatible kernel set: Linux 7.2.11 and NVIDIA 615.78.08.
+    nixpkgs.url = "github:nixos/nixpkgs/09063bd1f2b36fd9fd793c36dfade7bd40a93dfc";
     vix-editor = {
-      url = "github:Panchovix/nvidia-vbios-vix-editor/edf0f483d8d4a3d7a578f941647c95b503ab9795";
+      url = "github:Panchovix/nvidia-vbios-vix-editor";
       flake = false;
     };
   };
@@ -23,20 +23,45 @@
         config.allowUnfree = true;
       };
       inherit (pkgs) lib;
+      # 0.19.2 corrupts NVIDIA ELF load mappings (NixOS/patchelf#672).
+      patchelf = pkgs.patchelf.overrideAttrs (final: _: {
+        version = "0.19.3";
+        src = pkgs.fetchurl {
+          url = "https://github.com/NixOS/patchelf/releases/download/${final.version}/patchelf-${final.version}.tar.bz2";
+          hash = "sha256-INviPp28StdpB4qGetACwEKXoGn/k8lftyJC3VXU3W8=";
+        };
+      });
+      kernelPackages = pkgs.linuxPackages_latest.extend (_: previous: {
+        nvidiaPackages = previous.nvidiaPackages // lib.genAttrs [ "latest" "production" "stable" ]
+          (name: previous.nvidiaPackages.${name}.overrideAttrs (old: {
+            nativeBuildInputs = [ patchelf ] ++ old.nativeBuildInputs;
+          }));
+      });
       parts = import ./nix/packages.nix { inherit pkgs lib vix-editor; };
     in
     {
+      kernelPackages.${system} = kernelPackages;
+      apps.${system}.preflight = {
+        type = "app";
+        program = "${parts.preflight}/bin/gpu-power-preflight";
+      };
       nixosModules.default = import ./nix/module.nix { inherit vix-editor; };
 
       packages.${system} = {
-        inherit (parts) vix-editor powerd-shim gpu-power;
-        # The patched 615.71.09 open kernel module for this nixpkgs' linuxPackages_latest.
-        kernel-module = parts.patchedOpen pkgs.linuxPackages_latest.nvidiaPackages.latest;
+        inherit (parts)
+          vix-editor
+          powerd-shim
+          gpu-power
+          preflight
+          ;
+        # The patched 615.78.08 open kernel module for this nixpkgs' linuxPackages_latest.
+        kernel-module = parts.patchedOpen kernelPackages.nvidiaPackages.latest;
         default = parts.gpu-power;
       };
 
       # CPU-only checks. The driver build is `nix build .#kernel-module` (unfree, minutes).
       checks.${system} = {
+        nvidia-userspace = import ./tests/nvidia-userspace.nix { inherit pkgs kernelPackages; };
         module-eval = import ./tests/module-eval.nix {
           inherit nixpkgs pkgs;
           module = self.nixosModules.default;

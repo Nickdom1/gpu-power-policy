@@ -66,7 +66,6 @@ static int (*real_close)(int);
 static pthread_once_t initialized = PTHREAD_ONCE_INIT;
 static int version_matches;
 static char configured_bdf[32];
-static uint32_t configured_ceiling;
 
 static void log_text(const char *text)
 {
@@ -97,14 +96,17 @@ static void initialize(void)
     (void)dlerror();
     char version[32], extra;
     version_matches = read_text("/sys/module/nvidia/version", version, sizeof(version)) &&
-                      !strcmp(version, "615.71.09\n");
+                      !strcmp(version, GPU_POWER_DRIVER_VERSION "\n");
+    char runtime_bdf[32];
     const char *bdf = getenv("GPU_POWER_DEVICE");
+    if (!bdf && read_text("/run/gpu-power-policy/device", runtime_bdf, sizeof(runtime_bdf))) {
+        runtime_bdf[strcspn(runtime_bdf, "\n")] = 0; bdf = runtime_bdf;
+    }
     unsigned domain, bus, slot, function;
     if (bdf && strlen(bdf) == 12 &&
         sscanf(bdf, "%4x:%2x:%2x.%1x%c", &domain, &bus, &slot, &function, &extra) == 4 &&
         domain <= 0xffff && bus <= 0xff && slot <= 0x1f && function <= 7)
         snprintf(configured_bdf, sizeof(configured_bdf), "%04x:%02x:%02x.%u", domain, bus, slot, function);
-    configured_ceiling = number(getenv("GPU_POWER_CEILING_MW"));
 }
 
 static int forward_ioctl(int fd, unsigned long request, void *arg)
@@ -168,7 +170,9 @@ static void rewrite(struct control *ctl)
     char text[64];
     if (!read_text("/run/gpu-power-policy/target-mw", text, sizeof(text))) return;
     uint32_t value = number(text);
-    if (value && value <= configured_ceiling) memcpy(params + 0x2c, &value, sizeof(value));
+    if (!read_text("/run/gpu-power-policy/ceiling-mw", text, sizeof(text))) return;
+    uint32_t ceiling = number(text);
+    if (value && ceiling && value <= ceiling) memcpy(params + 0x2c, &value, sizeof(value));
 }
 
 int ioctl(int fd, unsigned long request, ...)
@@ -181,7 +185,7 @@ int ioctl(int fd, unsigned long request, ...)
     pthread_once(&initialized, initialize);
     if (request == 0xc0104629UL) forget_fd(fd); /* RM_FREE can recycle client/object handles. */
     struct stat st;
-    if (request == RM_CONTROL && arg && version_matches && configured_bdf[0] && configured_ceiling &&
+    if (request == RM_CONTROL && arg && version_matches && configured_bdf[0] &&
         fstat(fd, &st) == 0 && S_ISCHR(st.st_mode) && major(st.st_rdev) == 195) {
         struct control *ctl = arg;
         if (ctl->command == 0x2080e634 && ctl->size == 0x328 && selected_gpu(fd, ctl, &st))
